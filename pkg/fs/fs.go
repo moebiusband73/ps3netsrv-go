@@ -13,10 +13,11 @@ import (
 	"github.com/xakep666/ps3netsrv-go/internal/handler"
 )
 
-// SystemRoot needed to abstract *os.Root and it's relaxed implementation that allows outside symlinks.
+// SystemRoot abstracts storage backend: *os.Root, it's relaxed implementation that allows outside symlinks, object stores.
+// Files returned by Open and Create must return the requested path (relative to the root) from Name.
 type SystemRoot interface {
-	Open(path string) (*os.File, error)
-	Create(path string) (*os.File, error)
+	Open(path string) (handler.File, error)
+	Create(path string) (handler.WritableFile, error)
 	Stat(path string) (fs.FileInfo, error)
 	Remove(path string) error
 	Mkdir(path string, mode os.FileMode) error

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/xakep666/ps3netsrv-go/internal/handler"
 )
 
 // RelaxedSystemRoot just adds provided prefix to the file paths before making a system call.
@@ -52,22 +54,32 @@ func validateBasePathName(name string) error {
 	return nil
 }
 
-func (r *RelaxedSystemRoot) Open(path string) (*os.File, error) {
+func (r *RelaxedSystemRoot) Open(path string) (handler.File, error) {
 	realPath, err := r.realPath(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return os.Open(realPath)
+	f, err := os.Open(realPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewOSFile(f, path), nil
 }
 
-func (r *RelaxedSystemRoot) Create(path string) (*os.File, error) {
+func (r *RelaxedSystemRoot) Create(path string) (handler.WritableFile, error) {
 	realPath, err := r.realPath(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return os.Create(realPath)
+	f, err := os.Create(realPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewOSFile(f, path), nil
 }
 
 func (r *RelaxedSystemRoot) Stat(path string) (fs.FileInfo, error) {

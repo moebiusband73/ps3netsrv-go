@@ -41,15 +41,19 @@ func newFileCallbacks(log *slog.Logger) *fileCallbacks {
 		// Go's analog for size_t is uint.
 		fread: dynamiclibs.NewCallback(func(_ dynamiclibs.CDecl, target *byte, size, count uint, userdata dynamiclibs.Handle) uint {
 			f := userdata.Value().(handler.File)
-			n, err := f.Read(unsafe.Slice(target, count*size))
-			switch {
-			case errors.Is(err, nil):
-				return uint(n)
-			case errors.Is(err, io.EOF):
+			if size == 0 || count == 0 {
 				return 0
+			}
+
+			// fread semantics: fill the buffer unless EOF or error occurs and return number of complete items.
+			// Single Read is not enough for files which may return short reads (i.e. network-backed ones).
+			n, err := io.ReadFull(f, unsafe.Slice(target, count*size))
+			switch {
+			case errors.Is(err, nil), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+				return uint(n) / size
 			default:
 				log.Error("chd: read failed", logutil.ErrorAttr(err), slog.String("name", f.Name()))
-				return uint(extractSysErrCode(err))
+				return uint(n) / size // short count signals error
 			}
 		}),
 		// signatrue: int fclose(void *userdata);

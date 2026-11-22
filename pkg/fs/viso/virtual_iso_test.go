@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xakep666/ps3netsrv-go/internal/osutil/filesystem"
 	"github.com/xakep666/ps3netsrv-go/internal/testutil"
 	pkgfs "github.com/xakep666/ps3netsrv-go/pkg/fs"
 	"github.com/xakep666/ps3netsrv-go/pkg/fs/viso"
@@ -91,7 +92,7 @@ func TestMakeFullImage(t *testing.T) {
 		)
 	}
 
-	viso, err := viso.NewVirtualISO(t.Context(), pkgfs.NewFS(root, nil, nil), isoRoot, false)
+	viso, err := viso.NewVirtualISO(t.Context(), pkgfs.NewFS(filesystem.NewStrictSystemRoot(root), nil, nil), isoRoot, false)
 	require.NoError(t, err)
 
 	isoFile, err := os.CreateTemp(t.TempDir(), "test_gen*.iso")

@@ -40,7 +40,7 @@ func TestOpenReadClose(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, content, got)
 
-	underlying, ok := handler.FileAsType[*os.File](f)
+	underlying, ok := handler.FileAsType[*pkgfs.OSFile](f)
 	require.True(t, ok)
 
 	require.NoError(t, f.Close())

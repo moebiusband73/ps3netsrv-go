@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/xakep666/ps3netsrv-go/internal/osutil/filesystem"
 	pkgfs "github.com/xakep666/ps3netsrv-go/pkg/fs"
 	"github.com/xakep666/ps3netsrv-go/pkg/fs/viso"
 )
@@ -53,7 +54,7 @@ func TestReadBufferShapes(t *testing.T) {
 	require.NoError(t, root.WriteFile(filepath.Join(isoRoot, "c.bin"), multiSector, os.ModePerm))
 	require.NoError(t, root.WriteFile(filepath.Join(isoRoot, "d.txt"), []byte("d content"), os.ModePerm))
 
-	v, err := viso.NewVirtualISO(t.Context(), pkgfs.NewFS(root, nil, nil), isoRoot, false)
+	v, err := viso.NewVirtualISO(t.Context(), pkgfs.NewFS(filesystem.NewStrictSystemRoot(root), nil, nil), isoRoot, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = v.Close() })
 
@@ -91,7 +92,7 @@ func TestLongVolumeName(t *testing.T) {
 	require.NoError(t, root.Mkdir(isoRoot, os.ModePerm))
 	require.NoError(t, root.WriteFile(filepath.Join(isoRoot, "a.txt"), []byte("a"), os.ModePerm))
 
-	v, err := viso.NewVirtualISO(t.Context(), pkgfs.NewFS(root, nil, nil), isoRoot, false)
+	v, err := viso.NewVirtualISO(t.Context(), pkgfs.NewFS(filesystem.NewStrictSystemRoot(root), nil, nil), isoRoot, false)
 	require.NoError(t, err)
 	require.NoError(t, v.Close())
 }

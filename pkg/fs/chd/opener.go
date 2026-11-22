@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -60,7 +59,7 @@ func (o *Opener) Open(ctx context.Context, fsys *pkgfs.FS, path string) (handler
 	return o.openFromFile(ctx, path, f)
 }
 
-func (o *Opener) openFromFile(ctx context.Context, path string, f *os.File) (handler.File, error) {
+func (o *Opener) openFromFile(ctx context.Context, path string, f handler.File) (handler.File, error) {
 	cf, err := o.lib.NewFile(f)
 	switch {
 	case errors.Is(err, nil):
