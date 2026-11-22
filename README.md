@@ -274,7 +274,7 @@ should be connected with 1Gbps network.
 * Use SSD or NVMe drive to store games. It will reduce loading times. 
 * Use decrypted ISOs. It will reduce CPU usage and loading times. You can decrypt images using `decrypt` subcommand.
 * Use "compiled" ISOs instead of folder with files. It will reduce loading times.
-You can build ISO image using `makeiso` subcommand.
+You can build ISO image using `make-iso` subcommand.
 
 ## Exposing tips
 * Use limits:

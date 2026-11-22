@@ -196,15 +196,21 @@ func (c *clientReadCmd) Run(ctx context.Context, k *kong.Kong, client *client.Cl
 		_ = client.CloseFile(context.WithoutCancel(ctx))
 	}()
 
-	offset := min(int64(c.Seek)*int64(c.BlockSize), 0)
-	count := min(int64(c.Count)*int64(c.BlockSize), 0)
+	if c.BlockSize == 0 {
+		return fmt.Errorf("block size must be positive")
+	}
+
+	offset := max(int64(c.Seek)*int64(c.BlockSize), 0)
+	count := max(int64(c.Count)*int64(c.BlockSize), 0)
 	if offset+count > openResult.FileSize {
 		return fmt.Errorf("blocksize(%d)*(seek(%d)+count(%d)) are greater than file size (%d)",
 			c.BlockSize, c.Seek, c.Count, openResult.FileSize,
 		)
 	}
 
-	count = max(count, openResult.FileSize-offset)
+	if count == 0 { // read until EOF
+		count = openResult.FileSize - offset
+	}
 
 	targetFile, err := c.Target.open()
 	if err != nil {
@@ -270,11 +276,15 @@ func (c *clientReadCd2048Cmd) Run(ctx context.Context, k *kong.Kong, client *cli
 		_ = client.CloseFile(context.WithoutCancel(ctx))
 	}()
 
+	if c.BlockSize == 0 {
+		return fmt.Errorf("block size must be positive")
+	}
+
 	offset := c.Seek
 	count := c.Count
 
 	const sectorSize = 2048
-	if sectorSize*int64(offset+count) > openResult.FileSize { // not precise validation
+	if sectorSize*(int64(offset)+int64(count)) > openResult.FileSize { // not precise validation
 		return fmt.Errorf("blocksize(%d)*(seek(%d)+count(%d)) are greater than file size (%d)",
 			sectorSize, c.Seek, c.Count, openResult.FileSize,
 		)
@@ -306,13 +316,14 @@ func (c *clientReadCd2048Cmd) Run(ctx context.Context, k *kong.Kong, client *cli
 	}
 	fmt.Fprintf(k.Stderr, "Reading file %q from server in cd-2048 mode\n", c.Path)
 	for count > 0 {
-		err := client.ReadCD2048Critical(ctx, c.BlockSize, offset, target)
+		sectors := min(c.BlockSize, count)
+		err := client.ReadCD2048Critical(ctx, sectors, offset, target)
 		if err != nil {
 			return err
 		}
 
-		count -= c.BlockSize
-		offset += c.BlockSize
+		count -= sectors
+		offset += sectors
 	}
 
 	p.Wait()
@@ -335,15 +346,21 @@ func (c *clientWriteCmd) Run(ctx context.Context, k *kong.Kong, client *client.C
 		return err
 	}
 
-	offset := min(int64(c.Seek)*int64(c.BlockSize), 0)
-	count := min(int64(c.Count)*int64(c.BlockSize), 0)
+	if c.BlockSize == 0 {
+		return fmt.Errorf("block size must be positive")
+	}
+
+	offset := max(int64(c.Seek)*int64(c.BlockSize), 0)
+	count := max(int64(c.Count)*int64(c.BlockSize), 0)
 	if offset+count > fi.Size() {
 		return fmt.Errorf("blocksize(%d)*(seek(%d)+count(%d)) are greater than file size (%d)",
 			c.BlockSize, c.Seek, c.Count, fi.Size(),
 		)
 	}
 
-	count = max(count, fi.Size()-offset)
+	if count == 0 { // write until EOF
+		count = fi.Size() - offset
+	}
 
 	if offset > 0 {
 		_, err = c.Source.Seek(offset, io.SeekStart)
@@ -399,9 +416,9 @@ func (t *targetFileWithMode) open() (*os.File, error) {
 	case "truncate":
 		return os.OpenFile(t.TargetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	case "append":
-		return os.OpenFile(t.TargetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		return os.OpenFile(t.TargetPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	default:
-		return nil, fmt.Errorf("unknown mode %q", t.TargetPath)
+		return nil, fmt.Errorf("unknown mode %q", t.TargetMode)
 	}
 }
 

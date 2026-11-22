@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -67,7 +68,7 @@ func main() {
 			kongutil.BinSizeMapper,
 		),
 		func(ctx context.Context, k *kong.Kong, args []string) error {
-			kctx, err := k.Parse(translateArgs(args))
+			kctx, err := k.Parse(translateArgs(k, args))
 			if err != nil {
 				return err
 			}
@@ -128,23 +129,36 @@ func configLocations() []string {
 
 // hack to run server if 1st arg is a path to directory
 // this allows to simply drag-n-drop directory to executable
-func translateArgs(args []string) []string {
-	if len(args) == 0 {
+func translateArgs(k *kong.Kong, args []string) []string {
+	// drag-n-drop passes exactly one argument
+	if len(args) != 1 || isSubcommand(k, args[0]) {
 		return args
 	}
 
 	// simulate current ps3netsrv behaviour
-	dir := args[0]
+	// Clean removes trailing separator, so "GAME/" produces "GAME.iso" instead of "GAME/.iso"
+	dir := filepath.Clean(args[0])
 	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		target := dir + getIsoExt(filepath.Base(dir))
 		sfoPath := filepath.Join(dir, "PS3_GAME", "PARAM.SFO")
 		if st, err = os.Stat(sfoPath); err == nil && !st.IsDir() {
 			// if we found PARAM.SFO file we should make ps3-mode iso
-			return []string{"makeiso", "--ps3-mode", dir, dir + getIsoExt(dir)}
+			return []string{"make-iso", "--ps3-mode", dir, target}
 		}
-		return []string{"makeiso", dir, dir + getIsoExt(dir)}
+		return []string{"make-iso", dir, target}
 	}
 
 	return args
+}
+
+func isSubcommand(k *kong.Kong, arg string) bool {
+	for _, node := range k.Model.Children {
+		if node.Name == arg || slices.Contains(node.Aliases, arg) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func getIsoExt(name string) string {
