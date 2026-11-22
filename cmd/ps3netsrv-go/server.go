@@ -281,7 +281,7 @@ func (sapp *serverApp) scanAndWarn() {
 	badNameSamples := make([]string, 0, maxBadNames)
 	isBadName := func(name string) bool {
 		return strings.ContainsFunc(name, func(r rune) bool {
-			return r > rune(len(allowedCharsSet)) || !allowedCharsSet[r]
+			return r >= rune(len(allowedCharsSet)) || !allowedCharsSet[r]
 		})
 	}
 
