@@ -415,7 +415,7 @@ func IterateMetadata(f io.ReadSeeker, hdr *FileHeader) (iter.Seq[MetadataEntryHe
 
 func (hdr *MetadataEntryHeader) ReadValue(f io.ReadSeeker, buf []byte) (int, error) {
 	n := min(len(buf), int(hdr.Length))
-	if err := ioutil.FillBuffer(f, int64(hdr.Offset+chdMetadataHeaderSize), buf); err != nil {
+	if err := ioutil.FillBuffer(f, int64(hdr.Offset+chdMetadataHeaderSize), buf[:n]); err != nil {
 		return 0, err
 	}
 	return n, nil
