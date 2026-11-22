@@ -336,6 +336,14 @@ func (f *File) AsCD() (*CDFile, error) {
 		}
 	}
 
+	// values come from file, validate them to avoid division by zero and out of range access in reads
+	if f.Header.UnitBytes == 0 || f.Header.HunkBytes < f.Header.UnitBytes {
+		return nil, fmt.Errorf("invalid unit size %d for hunk size %d", f.Header.UnitBytes, f.Header.HunkBytes)
+	}
+	if sectorDataSize <= 0 || sectorDataSize > int(f.Header.UnitBytes) {
+		return nil, fmt.Errorf("invalid sector data size %d for unit size %d", sectorDataSize, f.Header.UnitBytes)
+	}
+
 	return &CDFile{
 		privateFile:    f,
 		Size:           int64(sectorDataSize) * int64(totalFrames),

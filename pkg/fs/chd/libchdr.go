@@ -72,6 +72,18 @@ func (l *LibCHDR) NewFile(f handler.File) (*File, error) {
 		return nil, fmt.Errorf("chd: open: %w", err)
 	}
 
+	ret, err := l.newFile(chdFileHandle, f, fi)
+	if err != nil {
+		// handle (and the file owned by it) must be released, cleanup is not registered yet
+		l.close(chdFileHandle)
+		return nil, err
+	}
+
+	ret.cleanup = runtime.AddCleanup(ret, l.close, chdFileHandle)
+	return ret, nil
+}
+
+func (l *LibCHDR) newFile(chdFileHandle fileHandle, f handler.File, fi fs.FileInfo) (*File, error) {
 	// clone to not refer to C memory
 	chdFileHeader := new(*l.getHeader(chdFileHandle))
 
@@ -112,9 +124,7 @@ func (l *LibCHDR) NewFile(f handler.File) (*File, error) {
 		ret.CDMetadata = metadata
 	}
 
-	pRet := &ret
-	pRet.cleanup = runtime.AddCleanup(pRet, l.close, chdFileHandle)
-	return pRet, nil
+	return &ret, nil
 }
 
 func (l *LibCHDR) readMeatadata(handle fileHandle) ([]CDMetadata, error) {
@@ -187,6 +197,9 @@ func (f *File) loadHunk(hunkNum int) error {
 	if len(f.currentHunkData) == 0 {
 		f.currentHunkData = make([]byte, f.Header.HunkBytes)
 	}
+
+	// buffer content is undefined if read fails
+	f.currentHunkNum = -1
 
 	readRes := f.lib.read(f.handle, uint32(hunkNum), &f.currentHunkData[0])
 	if err := f.lib.makeError(readRes); err != nil {
@@ -289,5 +302,9 @@ func (f *File) Close() error {
 
 	f.cleanup.Stop()
 	f.lib.close(f.handle)
+
+	// prevent use-after-free and double free of libchdr handle
+	f.handle = 0
+	f.currentHunkData = nil
 	return nil
 }

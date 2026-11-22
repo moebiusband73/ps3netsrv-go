@@ -200,7 +200,7 @@ func ReadHeader(f io.ReadSeeker) (*FileHeader, error) {
 			expectedHeaderSize = chdV2HeaderSize
 		}
 		if headerSize != expectedHeaderSize {
-			return nil, fmt.Errorf("invalid v%d header size: %d", version, expectedHeaderSize)
+			return nil, fmt.Errorf("invalid v%d header size: %d", version, headerSize)
 		}
 
 		ret = &FileHeader{
@@ -220,7 +220,7 @@ func ReadHeader(f io.ReadSeeker) (*FileHeader, error) {
 		}
 
 		hunkBytes := uint64(secLen) * uint64(ret.obsoleteHunkSize)
-		ret.LogicalBytes = uint64(ret.obsoleteCylinders) * uint64(ret.obsoleteHeads) * uint64(ret.obsoleteSectors) * chdV1HeaderSize
+		ret.LogicalBytes = uint64(ret.obsoleteCylinders) * uint64(ret.obsoleteHeads) * uint64(ret.obsoleteSectors) * uint64(secLen)
 		if hunkBytes == 0 || hunkBytes > math.MaxUint32 { // overflow check
 			return nil, fmt.Errorf("invalid hunkBytes: %d", hunkBytes)
 		}
@@ -229,7 +229,9 @@ func ReadHeader(f io.ReadSeeker) (*FileHeader, error) {
 		if err != nil {
 			return nil, fmt.Errorf("guess unit bytes: %w", err)
 		}
-		ret.UnitCount = ret.LogicalBytes + uint64(ret.UnitBytes) - 1
+		if ret.UnitCount, err = unitCount(ret); err != nil {
+			return nil, err
+		}
 	case 3:
 		if headerSize != chdV3HeaderSize {
 			return nil, fmt.Errorf("invalid v3 header size: %d", headerSize)
@@ -255,7 +257,9 @@ func ReadHeader(f io.ReadSeeker) (*FileHeader, error) {
 		if err != nil {
 			return nil, fmt.Errorf("guess unit bytes: %w", err)
 		}
-		ret.UnitCount = (ret.LogicalBytes + uint64(ret.UnitBytes) - 1) / uint64(ret.UnitBytes)
+		if ret.UnitCount, err = unitCount(ret); err != nil {
+			return nil, err
+		}
 	case 4:
 		if headerSize != chdV4HeaderSize {
 			return nil, fmt.Errorf("invalid v4 header size: %d", headerSize)
@@ -280,7 +284,9 @@ func ReadHeader(f io.ReadSeeker) (*FileHeader, error) {
 		if err != nil {
 			return nil, fmt.Errorf("guess unit bytes: %w", err)
 		}
-		ret.UnitCount = (ret.LogicalBytes + uint64(ret.UnitBytes) - 1) / uint64(ret.UnitBytes)
+		if ret.UnitCount, err = unitCount(ret); err != nil {
+			return nil, err
+		}
 	case 5:
 		if headerSize != chdV5HeaderSize {
 			return nil, fmt.Errorf("invalid v5 header size: %d", headerSize)
@@ -415,6 +421,15 @@ func (hdr *MetadataEntryHeader) ReadValue(f io.ReadSeeker, buf []byte) (int, err
 	return n, nil
 }
 
+// unitCount calculates amount of units, header values may come from corrupted file.
+func unitCount(hdr *FileHeader) (uint64, error) {
+	if hdr.UnitBytes == 0 {
+		return 0, fmt.Errorf("zero unit bytes")
+	}
+
+	return (hdr.LogicalBytes + uint64(hdr.UnitBytes) - 1) / uint64(hdr.UnitBytes), nil
+}
+
 func guessUnitBytes(f io.ReadSeeker, hdr *FileHeader) (uint32, error) {
 	mdIter, mdErr := IterateMetadata(f, hdr)
 	md := make([]byte, 512)
@@ -437,7 +452,11 @@ func guessUnitBytes(f io.ReadSeeker, hdr *FileHeader) (uint32, error) {
 				return 0, fmt.Errorf("decode hdd metadata %q", md[:n])
 			}
 
-			return uint32(bps), err
+			if bps <= 0 {
+				return 0, fmt.Errorf("invalid bytes per sector in hdd metadata: %d", bps)
+			}
+
+			return uint32(bps), nil
 		case cdMetadataOldTag,
 			cdMetadataTag,
 			cdMetadataTag2,

@@ -76,7 +76,7 @@ func (o *Opener) openFromFile(ctx context.Context, path string, f *os.File) (han
 	if cf.Header.IsCDCodesOnly() {
 		cdFile, err := cf.AsCD()
 		if err != nil {
-			_ = f.Close()
+			_ = cf.Close() // also closes f
 			return nil, err
 		}
 		o.logger.DebugContext(ctx, "Detected CD-encoded CHD, wrapping",
