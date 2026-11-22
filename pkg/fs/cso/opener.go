@@ -52,6 +52,7 @@ func (o Opener) Open(ctx context.Context, fsys *pkgfs.FS, path string) (handler.
 	}
 	cf, err := NewFile(f)
 	if err != nil {
+		_ = f.Close()
 		return nil, err
 	}
 

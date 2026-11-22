@@ -96,7 +96,7 @@ func NewIndexEntryCache(f io.ReadSeeker, hdr *Header, maxEntries int) *IndexEntr
 
 func (c *IndexEntryCache) ValueOf(entryNum int) (uint32, error) {
 	entriesCount := c.hdr.BlocksCount() + 1
-	if entryNum < 0 || entryNum > entriesCount {
+	if entryNum < 0 || entryNum >= entriesCount {
 		return 0, fmt.Errorf("block %d out of bounds [0;%d)", entryNum, entriesCount)
 	}
 
