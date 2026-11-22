@@ -17,7 +17,7 @@ func binSizeMapper(dctx *kong.DecodeContext, target reflect.Value) error {
 
 	switch target.Kind() {
 	case reflect.Int:
-		maxValue = math.MaxInt64
+		maxValue = math.MaxInt
 	case reflect.Int8:
 		maxValue = math.MaxInt8
 	case reflect.Int16:

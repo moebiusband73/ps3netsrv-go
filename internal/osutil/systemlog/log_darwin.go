@@ -60,7 +60,7 @@ func SystemLogHandler(level slog.Level) (slog.Handler, error) {
 		logSinkFunc[[]byte](func(_ context.Context, rec slog.Record, formatted []byte) (err error) {
 			defer func() {
 				if r := recover(); r != nil {
-					err = fmt.Errorf("syslog panic: %v", err)
+					err = fmt.Errorf("syslog panic: %v", r)
 				}
 			}()
 			priority := macoslibs.LOG_NOTICE

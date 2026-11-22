@@ -19,7 +19,9 @@ func ActivationListeners(name string) ([]net.Listener, error) {
 
 	listeners := make([]net.Listener, 0, len(files))
 	for _, file := range files {
-		if lis, err := net.FileListener(file); err == nil {
+		lis, err := net.FileListener(file)
+		_ = file.Close() // FileListener duplicates descriptor
+		if err == nil {
 			listeners = append(listeners, lis)
 		}
 	}

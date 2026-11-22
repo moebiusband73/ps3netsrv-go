@@ -500,7 +500,10 @@ func (h *Handler) HandleGetDirSize(ctx *Context, path string) (int64, error) {
 
 		info, err := h.Fs.Stat(ctx, path)
 		if err != nil {
-			return err
+			// returning error would silently stop the walk and report partial size
+			log.WarnContext(ctx, "Skipping file because of stat error",
+				slog.String("path", path), logutil.ErrorAttr(err))
+			return nil
 		}
 
 		size += info.Size()

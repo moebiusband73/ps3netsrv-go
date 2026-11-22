@@ -81,7 +81,8 @@ func walkDir(ctx context.Context, fsys FS, name string, d fs.DirEntry, walkDirFn
 			name1 := filepath.Join(name, d1.Name())
 			if err := walkDir(ctx, fsys, name1, d1, walkDirFn); err != nil {
 				if errors.Is(err, fs.SkipDir) {
-					break
+					// skip remaining entries of this directory, not only current batch
+					return nil
 				}
 				return err
 			}

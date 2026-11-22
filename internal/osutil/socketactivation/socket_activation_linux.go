@@ -20,8 +20,10 @@ var onceActviationListeners = sync.OnceValues(
 
 		listeners := make(map[string][]net.Listener, len(fds))
 		for _, fd := range fds {
-			if lis, err := net.FileListener(fd); err == nil {
-				name := fd.Name()
+			lis, err := net.FileListener(fd)
+			name := fd.Name()
+			_ = fd.Close() // FileListener duplicates descriptor
+			if err == nil {
 				listeners[name] = append(listeners[name], lis)
 			}
 		}
@@ -69,6 +71,9 @@ func activationFiles() ([]*os.File, error) {
 	nfds, err := strconv.Atoi(nfdsValue)
 	if err != nil {
 		return nil, fmt.Errorf("get listen fds count: %w", err)
+	}
+	if nfds < 0 {
+		return nil, fmt.Errorf("invalid listen fds count: %d", nfds)
 	}
 
 	fdnames := os.Getenv("LISTEN_FDNAMES")
