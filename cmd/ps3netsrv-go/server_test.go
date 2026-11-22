@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/minio/minio-go/v7"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,4 +53,25 @@ func TestMakeListenerUnix(t *testing.T) {
 		_, err := makeListener("unix:" + filepath.Join(dir, "p.sock") + ",rw")
 		require.Error(t, err)
 	})
+}
+
+func TestS3OptionsConfig(t *testing.T) {
+	opts := s3Options{Endpoint: "http://nas.local:9000/", BucketLookup: "path", AccessKey: "ak", SecretKey: "sk"}
+	cfg, err := opts.config("s3://games/ps3/lib")
+	require.NoError(t, err)
+	require.Equal(t, "nas.local:9000", cfg.Endpoint)
+	require.False(t, cfg.Secure)
+	require.Equal(t, "games", cfg.Bucket)
+	require.Equal(t, "ps3/lib", cfg.Prefix)
+	require.Equal(t, minio.BucketLookupPath, cfg.BucketLookup)
+	require.NotNil(t, cfg.Creds)
+
+	opts = s3Options{Endpoint: "s3.amazonaws.com", BucketLookup: "auto"}
+	cfg, err = opts.config("s3://bucket")
+	require.NoError(t, err)
+	require.True(t, cfg.Secure)
+	require.Nil(t, cfg.Creds, "default credentials chain must be used")
+
+	_, err = opts.config("s3://")
+	require.Error(t, err)
 }

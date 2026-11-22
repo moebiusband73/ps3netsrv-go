@@ -17,6 +17,7 @@ will run without any external library on target system.
 * TCP data exchange timeouts / auto-close of idle connections: configured by `--read-timeout` parameter.
 * [Compressed images](#compressed-images) - save your disk space without filesystem-level compression.
 * [Socket activation](#socket-activation) - run service on-demand, only when client (console) connects.
+* [S3 object storage](#s3-object-storage) - serve games directly from an S3-compatible bucket (read-only).
 * Natively runs as [Windows Service](#windows)
 * Built-in protocol client. See `client` subcommand.
 
@@ -117,6 +118,27 @@ consumes some CPU and RAM even in idle (without active clients). Key components 
 * Optional auto-shutdown after some idle time. In `ps3netsrv-go` it's configured by `--shutdown-idle-timeout` flag or corresponding env variable/config entry.
 
 For example how to run under systemd see [Systemd service](#systemd-service) or [MacOS Launchd service](#macos-launchd-service).
+
+## S3 object storage
+Games can be served directly from an S3-compatible object storage (AWS S3, MinIO, Ceph RGW, Garage, Cloudflare R2, Backblaze B2, etc.)
+without mounting it. Use `s3://bucket/prefix` as root, prefix (directory inside a bucket) is optional:
+```shell
+$ export PS3NETSRV_S3_ACCESS_KEY=... PS3NETSRV_S3_SECRET_KEY=...
+$ ps3netsrv-go server --root=s3://games/ps3 --s3-endpoint=http://nas.local:9000 --s3-bucket-lookup=path
+```
+Bucket layout is the same as for a local root: `PS3ISO`, `PSXISO`, `GAMES`, `REDKEY`, etc. "Directories" are emulated with `/`-separated key prefixes.
+All image formats are supported, including compressed images, virtual ISO from directories and Redump keys.
+
+Notes:
+* S3 storage is read-only: `--allow-write` is not supported.
+* If access key is not provided, credentials are taken from standard AWS (`AWS_ACCESS_KEY_ID`, `~/.aws/credentials`) or MinIO
+environment variables/config files or from IAM role. Prefer environment variables or config file over command line flags for secrets.
+* Most self-hosted servers require `--s3-bucket-lookup=path`. Use `http://` in endpoint or `--s3-insecure` for plain HTTP.
+* Data is cached in memory (`--s3-cache-size`, 128MiB by default) and read ahead for sequential reads (`--s3-readahead`, up to 8MiB).
+Increase readahead if your storage has high latency. Object listings are cached for `--s3-metadata-ttl` (1 minute by default),
+so new files appear with a small delay.
+* Reading from a remote (internet) storage requires stable bandwidth of at least 10-20 Mbit/s for comfortable PS3 game loading;
+a storage in a local network is recommended.
 
 ## Installation
 This project shipped in a multiple ways for convenient installation:

@@ -20,13 +20,18 @@ import (
 
 func startServer(t *testing.T, root string, allowWrite bool) *client.Client {
 	t.Helper()
+	return startServerWithFS(t, pkgfs.NewFS(pkgfs.NewRelaxedSystemRoot(root), nil, nil), allowWrite)
+}
+
+func startServerWithFS(t *testing.T, fsys *pkgfs.FS, allowWrite bool) *client.Client {
+	t.Helper()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	srv := &server.Server[handler.State]{
 		Handler: &handler.Handler{
-			Fs:         pkgfs.NewFS(pkgfs.NewRelaxedSystemRoot(root), nil, nil),
+			Fs:         fsys,
 			Copier:     ioutil.NewPooledCopier(4096),
 			AllowWrite: allowWrite,
 		},

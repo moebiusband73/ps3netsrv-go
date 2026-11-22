@@ -22,6 +22,8 @@ import (
 	"github.com/lmittmann/tint"
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"golang.org/x/net/netutil"
 	"golang.org/x/sync/errgroup"
 
@@ -37,6 +39,7 @@ import (
 	"github.com/xakep666/ps3netsrv-go/pkg/fs/cso"
 	"github.com/xakep666/ps3netsrv-go/pkg/fs/encryptediso"
 	"github.com/xakep666/ps3netsrv-go/pkg/fs/iso3k3y"
+	"github.com/xakep666/ps3netsrv-go/pkg/fs/s3root"
 	"github.com/xakep666/ps3netsrv-go/pkg/fs/seekablezstd"
 	"github.com/xakep666/ps3netsrv-go/pkg/fs/viso"
 	"github.com/xakep666/ps3netsrv-go/pkg/iprange"
@@ -44,7 +47,7 @@ import (
 )
 
 type serverApp struct {
-	Root                  string           `help:"Root directory with games." default:"." env:"PS3NETSRV_ROOT"`
+	Root                  string           `help:"Root directory with games or S3 URL (s3://bucket/prefix, see S3 flags)." default:"." env:"PS3NETSRV_ROOT"`
 	ListenAddr            string           `help:"Main server listen address." default:"0.0.0.0:38008" env:"PS3NETSRV_LISTEN_ADDR"`
 	Debug                 bool             `help:"Enable debug log messages. DEPRECATED: use --log-level." env:"PS3NETSRV_DEBUG"`
 	LogLevel              slog.Level       `help:"Logging level." default:"info" env:"PS3NETSRV_LOG_LEVEL"`
@@ -59,6 +62,67 @@ type serverApp struct {
 	// default value found during debugging
 	BufferSize int64 `help:"Size of buffer for data transfer. Change it only if you know what you doing." type:"binsize" default:"64k" env:"PS3NETSRV_BUFFER_SIZE"`
 	SystemLog  bool  `help:"Send logs to system logger instead of stdout." env:"PS3NETSRV_SYSTEM_LOG"`
+
+	S3 s3Options `embed:"" prefix:"s3-" envprefix:"PS3NETSRV_S3_" group:"S3 storage (used when root is s3://bucket/prefix)"`
+}
+
+type s3Options struct {
+	Endpoint       string        `help:"S3 endpoint: host[:port], optionally with http:// or https:// scheme." default:"s3.amazonaws.com" env:"ENDPOINT"`
+	Region         string        `help:"S3 region, detected automatically if empty." env:"REGION"`
+	BucketLookup   string        `help:"Bucket addressing style: auto, dns (virtual-hosted) or path. Use 'path' for most self-hosted servers." enum:"auto,dns,path" default:"auto" env:"BUCKET_LOOKUP"`
+	Insecure       bool          `help:"Use plain HTTP instead of HTTPS." env:"INSECURE"`
+	AccessKey      string        `help:"S3 access key. If empty, AWS/MinIO environment variables, credential files or IAM are used." env:"ACCESS_KEY"`
+	SecretKey      string        `help:"S3 secret key. Prefer environment variable or config file over command line." env:"SECRET_KEY"`
+	CacheSize      int64         `help:"Size of in-memory cache for S3 data." type:"binsize" default:"128m" env:"CACHE_SIZE"`
+	BlockSize      int64         `help:"Cache page size, also minimal request size." type:"binsize" default:"64k" env:"BLOCK_SIZE"`
+	Readahead      int64         `help:"Maximal readahead window for sequential reads." type:"binsize" default:"8m" env:"READAHEAD"`
+	MetadataTTL    time.Duration `help:"How long object listings and metadata are cached." default:"1m" env:"METADATA_TTL"`
+	RequestTimeout time.Duration `help:"Timeout for S3 response headers and stalled response bodies." default:"30s" env:"REQUEST_TIMEOUT"`
+}
+
+func (o *s3Options) config(rootURL string) (s3root.Config, error) {
+	bucket, prefix, err := s3root.ParseURL(rootURL)
+	if err != nil {
+		return s3root.Config{}, fmt.Errorf("parse s3 root: %w", err)
+	}
+
+	endpoint, secure := o.Endpoint, !o.Insecure
+	if rest, ok := strings.CutPrefix(endpoint, "http://"); ok {
+		endpoint, secure = rest, false
+	} else if rest, ok = strings.CutPrefix(endpoint, "https://"); ok {
+		endpoint, secure = rest, true
+	}
+	endpoint = strings.TrimSuffix(endpoint, "/")
+
+	var lookup minio.BucketLookupType
+	switch o.BucketLookup {
+	case "dns":
+		lookup = minio.BucketLookupDNS
+	case "path":
+		lookup = minio.BucketLookupPath
+	default:
+		lookup = minio.BucketLookupAuto
+	}
+
+	cfg := s3root.Config{
+		Endpoint:       endpoint,
+		Region:         o.Region,
+		Secure:         secure,
+		BucketLookup:   lookup,
+		Bucket:         bucket,
+		Prefix:         prefix,
+		PageSize:       o.BlockSize,
+		CacheSize:      o.CacheSize,
+		ReadaheadMax:   o.Readahead,
+		MetadataTTL:    o.MetadataTTL,
+		RequestTimeout: o.RequestTimeout,
+		Logger:         slog.Default(),
+	}
+	if o.AccessKey != "" || o.SecretKey != "" {
+		cfg.Creds = credentials.NewStaticV4(o.AccessKey, o.SecretKey, "")
+	}
+
+	return cfg, nil
 }
 
 func (sapp *serverApp) Help() string {
@@ -77,6 +141,10 @@ For better security it's recommended to run with following options:
 	* '--client-whitelist' if you don't have firewall to prevent connections from unwanted networks
 
 It's also highly recommended to run server under non-root user with restricted access especially if '--allow-write' option is enabled.
+
+Root may be an S3-compatible object store URL "s3://bucket/prefix" (read-only, see '--s3-*' flags).
+Credentials are taken from '--s3-access-key'/'--s3-secret-key' or from standard AWS/MinIO environment variables,
+credential files or IAM. Example for MinIO: '--root=s3://games --s3-endpoint=http://nas:9000 --s3-bucket-lookup=path'.
 
 Option '--max-clients' may be used to limit amount of connected clients to control resources consumption.
 
@@ -179,7 +247,47 @@ func (sapp *serverApp) warnIPRange(listener net.Listener) {
 	}
 }
 
-func (sapp *serverApp) server(ctx context.Context, idt *idleTracker) error {
+func (sapp *serverApp) isS3Root() bool {
+	return s3root.IsURL(sapp.Root)
+}
+
+// openSystemRoot creates storage backend. Returned function must be called to release it.
+func (sapp *serverApp) openSystemRoot(ctx context.Context) (fs.SystemRoot, func(), error) {
+	switch {
+	case sapp.isS3Root():
+		cfg, err := sapp.S3.config(sapp.Root)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		root, err := s3root.New(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		checkCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout+5*time.Second)
+		defer cancel()
+		if err = root.Check(checkCtx); err != nil {
+			_ = root.Close()
+			return nil, nil, err
+		}
+
+		return root, sync.OnceFunc(func() { _ = root.Close() }), nil
+	case sapp.StrictRoot:
+		root, err := os.OpenRoot(sapp.Root)
+		if err != nil {
+			return nil, nil, fmt.Errorf("open root failed: %w", err)
+		}
+
+		// Wrap so large files (>2 GiB, i.e. every PS3 ISO) can be opened on
+		// 32-bit platforms; os.Root's openat omits O_LARGEFILE.
+		return filesystem.NewStrictSystemRoot(root), sync.OnceFunc(func() { _ = root.Close() }), nil
+	default:
+		return fs.NewRelaxedSystemRoot(sapp.Root), func() {}, nil
+	}
+}
+
+func (sapp *serverApp) server(ctx context.Context, idt *idleTracker, sysRoot fs.SystemRoot) error {
 	socket, err := makeListener(sapp.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("listen failed: %w", err)
@@ -196,19 +304,6 @@ func (sapp *serverApp) server(ctx context.Context, idt *idleTracker) error {
 		cop = ioutil.NewPooledCopier(sapp.BufferSize)
 	} else {
 		cop = ioutil.NewCopier()
-	}
-
-	sysRoot := fs.SystemRoot(fs.NewRelaxedSystemRoot(sapp.Root))
-	if sapp.StrictRoot {
-		root, err := os.OpenRoot(sapp.Root)
-		if err != nil {
-			_ = socket.Close()
-			return fmt.Errorf("open root failed: %w", err)
-		}
-		defer root.Close()
-		// Wrap so large files (>2 GiB, i.e. every PS3 ISO) can be opened on
-		// 32-bit platforms; os.Root's openat omits O_LARGEFILE.
-		sysRoot = filesystem.NewStrictSystemRoot(root)
 	}
 
 	s := server.Server[handler.State]{
@@ -264,13 +359,13 @@ func (sapp *serverApp) warnRoot() {
 			slog.Warn("Running as root/administrator is not recommended! Please run as a regular user.")
 		}
 
-		if !sapp.StrictRoot {
+		if !sapp.StrictRoot && !sapp.isS3Root() {
 			slog.Warn("Running as root/administrator without strict root access is dangerous! This may lead to data stealing!")
 		}
 	}
 }
 
-func (sapp *serverApp) scanAndWarn() {
+func (sapp *serverApp) scanAndWarn(root fs.SystemRoot) {
 	const maxEntries = 4096 // from ps3netsrv
 
 	// notify user if file name can cause access issues
@@ -288,11 +383,11 @@ func (sapp *serverApp) scanAndWarn() {
 		})
 	}
 
-	queue := []string{sapp.Root}
+	queue := []string{"."} // relative to root
 	scanDir := func(path string) {
 		slog.Debug("Checking dir for entries limit", "dir", path)
 
-		dir, err := os.Open(path)
+		dir, err := root.Open(path)
 		if err != nil {
 			return
 		}
@@ -309,7 +404,7 @@ func (sapp *serverApp) scanAndWarn() {
 			numEntries += len(entries)
 			for _, entry := range entries {
 				if len(badNameSamples) <= maxBadNames && isBadName(entry.Name()) {
-					relPath := filepath.Join(strings.TrimPrefix(path, sapp.Root), entry.Name())
+					relPath := filepath.Join(path, entry.Name())
 					badNameSamples = append(badNameSamples, strconv.Quote(relPath))
 				}
 
@@ -357,21 +452,41 @@ func (sapp *serverApp) setupRuntime() {
 }
 
 func (sapp *serverApp) Run(ctx context.Context, k *kong.Kong) error {
-	// do this manually because type:existingdir flags can't be read from config
-	newRoot := kong.ExpandPath(sapp.Root)
-	di, err := os.Stat(newRoot)
-	if err != nil || !di.IsDir() {
-		return fmt.Errorf("root %q is not exists or not a directory", sapp.Root)
+	if sapp.isS3Root() {
+		if sapp.AllowWrite {
+			return fmt.Errorf("'--allow-write' is not supported for S3 root")
+		}
+	} else {
+		// do this manually because type:existingdir flags can't be read from config
+		newRoot := kong.ExpandPath(sapp.Root)
+		di, err := os.Stat(newRoot)
+		if err != nil || !di.IsDir() {
+			return fmt.Errorf("root %q is not exists or not a directory", sapp.Root)
+		}
+		sapp.Root = newRoot
 	}
-	sapp.Root = newRoot
 
 	sapp.setupLogger(k)
 	sapp.setupRuntime()
 	sapp.warnRoot()
-	go sapp.scanAndWarn() // asynchronously to not delay server startup
+
+	if sapp.isS3Root() && sapp.StrictRoot {
+		slog.Info("'--strict-root' has no effect for S3 root")
+	}
 
 	ctx, idleCancel := context.WithCancel(ctx)
 	defer idleCancel()
+
+	sysRoot, closeRoot, err := sapp.openSystemRoot(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeRoot()
+
+	// abort in-flight storage requests on shutdown, otherwise server waits for them
+	context.AfterFunc(ctx, closeRoot)
+
+	go sapp.scanAndWarn(sysRoot) // asynchronously to not delay server startup
 
 	idt := newIdleTracker(sapp.ShutdownIdleTimeout, func() {
 		slog.Info("Idle timeout expired, shutting down")
@@ -384,7 +499,7 @@ func (sapp *serverApp) Run(ctx context.Context, k *kong.Kong) error {
 		return sapp.debugServer(ctx, idt)
 	})
 	eg.Go(func() error {
-		return sapp.server(ctx, idt)
+		return sapp.server(ctx, idt, sysRoot)
 	})
 
 	err = eg.Wait()
