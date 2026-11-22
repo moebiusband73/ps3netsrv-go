@@ -25,8 +25,11 @@ func (r *RelaxedSystemRoot) realPath(name string) (path string, err error) {
 	}
 
 	bpath := filepath.Clean(r.path)
-	path = filepath.Clean(filepath.Join(bpath, name))
-	if !strings.HasPrefix(path, bpath) {
+	path = filepath.Join(bpath, name)
+
+	// plain prefix check is not enough: "/srv/ps3_private" has prefix "/srv/ps3"
+	rel, err := filepath.Rel(bpath, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return name, os.ErrNotExist
 	}
 
