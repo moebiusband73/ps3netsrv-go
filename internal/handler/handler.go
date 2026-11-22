@@ -1,12 +1,12 @@
 package handler
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -56,6 +56,7 @@ func (h *Handler) HandleOpenDir(ctx *Context, path string) (bool, error) {
 
 	info, err := handle.Stat()
 	if err != nil {
+		_ = handle.Close()
 		return false, fmt.Errorf("stat failed: %w", err)
 	}
 
@@ -242,14 +243,16 @@ func (h *Handler) HandleOpenFile(ctx *Context, path string) (fs.FileInfo, error)
 		return nil, err
 	}
 
-	ctx.State.ROFile = f
-	ctx.State.CDSectorSize = 2352 // default sector size
-
 	fi, err := f.Stat()
 	if err != nil {
 		log.WarnContext(ctx, "Stat failed", logutil.ErrorAttr(err))
+		_ = f.Close()
 		return nil, err
 	}
+
+	ctx.State.ROFile = f
+	ctx.State.ROFileSize = fi.Size()
+	ctx.State.CDSectorSize = 2352 // default sector size
 
 	// if file size between 2Mb and 848Mb we should try to detect sector size
 	if fi.Size() >= 0x200000 && fi.Size() <= 0x35000000 {
@@ -279,6 +282,7 @@ func (h *Handler) HandleCloseFile(ctx *Context) error {
 	}
 
 	ctx.State.ROFile = nil
+	ctx.State.ROFileSize = 0
 	ctx.State.CDSectorSize = 0
 	return nil
 }
@@ -291,22 +295,28 @@ func (h *Handler) HandleReadFile(ctx *Context, limit uint32, offset uint64, wr s
 		return fmt.Errorf("no file opened")
 	}
 
+	// Response length must be sent before data. Calculate it from file size
+	// and stream data instead of buffering up to 4GiB requested by client.
+	var n int64
+	if size := ctx.State.ROFileSize; offset < uint64(size) {
+		n = min(int64(limit), size-int64(offset), math.MaxInt32)
+	}
+
+	wr.WriteHeader(int32(n))
+	if n == 0 {
+		return nil
+	}
+
 	if _, err := ctx.State.ROFile.Seek(int64(offset), io.SeekStart); err != nil {
 		return fmt.Errorf("seek failed: %w", err)
 	}
 
-	var buf bytes.Buffer
-
-	n, err := buf.ReadFrom(io.LimitReader(ctx.State.ROFile, int64(limit)))
-	if err != nil {
+	if _, err := h.Copier.CopyN(wr, ctx.State.ROFile, n); err != nil {
 		return fmt.Errorf("read failed: %w", err)
 	}
 
 	log.DebugContext(ctx, "Read file completed", slog.Int64("read", n))
-
-	wr.WriteHeader(int32(n))
-	_, err = buf.WriteTo(wr)
-	return err
+	return nil
 }
 
 func (h *Handler) HandleReadFileCritical(ctx *Context, limit uint32, offset uint64, w io.Writer) error {

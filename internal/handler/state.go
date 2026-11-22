@@ -9,7 +9,8 @@ type State struct {
 	CwdHandle    File
 	Subdirs      bool
 	ROFile       File
-	CDSectorSize int // of ROFile, used by ReadCD2048Critical
+	ROFileSize   int64 // of ROFile, captured on open
+	CDSectorSize int   // of ROFile, used by ReadCD2048Critical
 	WOFile       WritableFile
 
 	OnClose func() error
@@ -24,6 +25,7 @@ func (s *State) Close() error {
 		}
 
 		s.ROFile = nil
+		s.ROFileSize = 0
 	}
 
 	if s.CwdHandle != nil {

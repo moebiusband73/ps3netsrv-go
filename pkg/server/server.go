@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"path"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,7 +79,19 @@ func (s *Server[StateT]) deriveConnContext(conn net.Conn) context.Context {
 }
 
 func (s *Server[StateT]) serveConn(conn net.Conn) {
-	s.trackConn(&conn, true)
+	log := s.Logger.With(logutil.StringerAttr("remote", conn.RemoteAddr()))
+
+	// a bug in a handler (i.e. malformed image) must not crash the whole server
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("Connection handler panicked", slog.Any("panic", r), slog.String("stack", string(debug.Stack())))
+		}
+	}()
+
+	if !s.trackConn(&conn, true) {
+		_ = conn.Close()
+		return
+	}
 	defer s.trackConn(&conn, false)
 
 	ctx := &Context[StateT]{
@@ -87,8 +100,6 @@ func (s *Server[StateT]) serveConn(conn net.Conn) {
 		wr:         proto.Writer{Writer: conn},
 	}
 	ctx.Context, ctx.cancel = context.WithCancel(s.deriveConnContext(conn))
-
-	log := s.Logger.With(logutil.StringerAttr("remote", conn.RemoteAddr()))
 
 	log.Info("Client connected")
 
@@ -161,17 +172,22 @@ func (s *Server[StateT]) trackListener(ln *net.Listener, add bool) bool {
 	return true
 }
 
-func (s *Server[StateT]) trackConn(c *net.Conn, add bool) {
+// trackConn returns false if connection was not added because server is shutting down.
+func (s *Server[StateT]) trackConn(c *net.Conn, add bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.activeConn == nil {
 		s.activeConn = make(map[*net.Conn]struct{})
 	}
 	if add {
+		if s.shuttingDown() {
+			return false
+		}
 		s.activeConn[c] = struct{}{}
 	} else {
 		delete(s.activeConn, c)
 	}
+	return true
 }
 
 func (s *Server[StateT]) shuttingDown() bool {
@@ -311,7 +327,9 @@ func (s *Server[StateT]) handleOpenFile(ctx *Context[StateT]) error {
 	filePath = path.Clean(filePath)
 
 	if _, name := path.Split(filePath); name == "CLOSEFILE" {
-		s.Handler.HandleCloseFile(ctx)
+		if err := s.Handler.HandleCloseFile(ctx); err != nil {
+			s.Logger.WarnContext(ctx, "Close file failed", logutil.ErrorAttr(err))
+		}
 		return ctx.wr.SendOpenFileForCLOSEFILE()
 	}
 
@@ -364,6 +382,28 @@ func (w *readFileResponseWriter) Write(p []byte) (n int, err error) {
 	return n, nil
 }
 
+// finish sends the length if no data was written (zero-length response)
+// and checks that exactly declared amount of data was sent.
+func (w *readFileResponseWriter) finish() error {
+	if !w.dataLengthSet {
+		return fmt.Errorf("WriteHeader wasn't called")
+	}
+
+	if !w.dataLengthSent {
+		if err := w.upstream.SendReadFileResultLen(w.dataLength); err != nil {
+			return err
+		}
+
+		w.dataLengthSent = true
+	}
+
+	if w.written != int(w.dataLength) {
+		return fmt.Errorf("sent %d bytes but %d declared", w.written, w.dataLength)
+	}
+
+	return nil
+}
+
 func (s *Server[StateT]) handleReadFile(ctx *Context[StateT]) error {
 	toRead, off, err := ctx.rd.ReadReadFile()
 	if err != nil {
@@ -373,7 +413,7 @@ func (s *Server[StateT]) handleReadFile(ctx *Context[StateT]) error {
 	wr := &readFileResponseWriter{upstream: &ctx.wr}
 	err = s.Handler.HandleReadFile(ctx, toRead, off, wr)
 	if err == nil {
-		return nil
+		return wr.finish()
 	}
 	if !wr.dataLengthSent {
 		s.Logger.ErrorContext(ctx, "ReadFile failed gracefully", logutil.ErrorAttr(err))
@@ -421,6 +461,13 @@ func (s *Server[StateT]) handleWriteFile(ctx *Context[StateT]) error {
 	}
 
 	written, err := s.Handler.HandleWriteFile(ctx, data)
+
+	// Consume payload remainder that handler didn't read (i.e. on error),
+	// otherwise it will be interpreted as next commands.
+	if _, drainErr := io.Copy(io.Discard, data); drainErr != nil {
+		return fmt.Errorf("drain file data failed: %w", drainErr)
+	}
+
 	if err != nil {
 		return ctx.wr.SendWriteFileError()
 	}
@@ -464,7 +511,7 @@ func (s *Server[StateT]) handleRmdir(ctx *Context[StateT]) error {
 		return ctx.wr.SendRmdirError()
 	}
 
-	return ctx.wr.SendMkdirResult()
+	return ctx.wr.SendRmdirResult()
 }
 
 func (s *Server[StateT]) handleGetDirSize(ctx *Context[StateT]) error {
