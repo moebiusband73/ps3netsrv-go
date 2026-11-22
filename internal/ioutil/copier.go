@@ -55,5 +55,5 @@ func (c *Copier) CopyN(w io.Writer, r io.Reader, n int64) (int64, error) {
 		// src stopped early; must have been EOF.
 		err = io.EOF
 	}
-	return n, err
+	return written, err
 }
