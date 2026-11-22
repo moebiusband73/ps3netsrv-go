@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 
@@ -63,6 +64,7 @@ type EncryptedISO struct {
 	cbcDec            cbcMode
 	iv                []byte
 	offset            iso9660.SizeBytes // to track where we are now without calling Seek
+	scratch           []byte            // used to read whole sectors for unaligned reads
 }
 
 // NewEncryptedISO wraps File to EncryptedISO with provided "data1" key.
@@ -78,6 +80,12 @@ func NewEncryptedISO(f handler.File, data1 []byte, clearRegions bool) (*Encrypte
 	err = binary.Read(f, binary.BigEndian, &hdr)
 	if err != nil {
 		return nil, fmt.Errorf("read unencrypted regions count failed: %w", err)
+	}
+
+	// region map must fit into the first sector
+	const maxRegions = uint32((iso9660.SectorSize - 8) / 8)
+	if hdr.Count > maxRegions {
+		return nil, fmt.Errorf("unexpected unencrypted regions count (%d)", hdr.Count)
 	}
 
 	unencryptedRegions := make([]unencryptedRegion, hdr.Count)
@@ -99,7 +107,7 @@ func NewEncryptedISO(f handler.File, data1 []byte, clearRegions bool) (*Encrypte
 	}
 
 	var prevRegionEnd uint32
-	encryptedRegions := make([]region, hdr.Count-1)
+	encryptedRegions := make([]region, 0, hdr.Count-1)
 	for i, unencryptedRegion := range unencryptedRegions {
 		// some sanity checks: region "borders" must increase monotonically
 		if unencryptedRegion.End <= unencryptedRegion.Start {
@@ -145,17 +153,74 @@ func NewEncryptedISO(f handler.File, data1 []byte, clearRegions bool) (*Encrypte
 }
 
 func (e *EncryptedISO) Read(b []byte) (int, error) {
-	readStart := e.offset
+	start := e.offset
+	end := start + iso9660.SizeBytes(len(b))
 
-	read, err := e.privateFile.Read(b)
-	if err != nil || read == 0 {
+	if !e.overlapsEncrypted(start, end) {
+		read, err := e.privateFile.Read(b)
+		e.offset += iso9660.SizeBytes(read)
+		e.clearRegionsData(start, b[:read])
 		return read, err
 	}
 
-	e.offset += iso9660.SizeBytes(read)
-	e.clearRegionsData(readStart, b[:read])
-	e.decryptData(readStart, b[:read])
+	// CBC decryption works on whole sectors, so read them and copy out requested part if needed.
+	alignedStart := start.FloorSectors().Bytes()
+	alignedEnd := end.AlignToSectors()
+	direct := alignedStart == start && alignedEnd == end
+
+	buf := b
+	if !direct {
+		if cap(e.scratch) < int(alignedEnd-alignedStart) {
+			e.scratch = make([]byte, alignedEnd-alignedStart)
+		}
+		buf = e.scratch[:alignedEnd-alignedStart]
+
+		if _, err := e.privateFile.Seek(int64(alignedStart), io.SeekStart); err != nil {
+			return 0, err
+		}
+	}
+
+	n, err := io.ReadFull(e.privateFile, buf)
+	switch {
+	case err == nil, errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+		// short read is possible only at the end of the image
+	default:
+		return 0, err
+	}
+
+	// trailing incomplete sector (if any) can't be decrypted
+	e.decryptData(alignedStart, buf[:n-n%int(iso9660.SectorSize)])
+
+	read := n
+	if !direct {
+		read = 0
+		if skip := int(start - alignedStart); n > skip {
+			read = copy(b, buf[skip:n])
+		}
+
+		// keep underlying file position consistent with returned data
+		if _, err = e.privateFile.Seek(int64(start)+int64(read), io.SeekStart); err != nil {
+			return 0, err
+		}
+	}
+
+	if read == 0 {
+		return 0, io.EOF
+	}
+
+	e.offset = start + iso9660.SizeBytes(read)
+	e.clearRegionsData(start, b[:read])
 	return read, nil
+}
+
+func (e *EncryptedISO) overlapsEncrypted(start, end iso9660.SizeBytes) bool {
+	for _, region := range e.encryptedRegions {
+		if region.start.Bytes() < end && region.end.Bytes() > start {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (e *EncryptedISO) Seek(offset int64, whence int) (int64, error) {
@@ -185,8 +250,9 @@ func (e *EncryptedISO) decryptData(start iso9660.SizeBytes, data []byte) {
 			continue
 		}
 
+		// data must be sector-aligned here
 		startSector := max(region.start, start.FloorSectors())
-		endSector := min(region.end, end.Sectors())
+		endSector := min(region.end, end.FloorSectors())
 		for i := startSector; i < endSector; i++ {
 			encryptedSpan := data[i.Bytes()-start : i.Next().Bytes()-start]
 			e.setIVForSector(i).CryptBlocks(encryptedSpan, encryptedSpan)
