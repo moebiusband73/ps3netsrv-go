@@ -74,11 +74,11 @@ func (iso *ISO3k3y) Read(b []byte) (int, error) {
 
 func (*ISO3k3y) clear3k3yData(start iso9660.SizeBytes, data []byte) {
 	end := start + iso9660.SizeBytes(len(data))
-	if start >= _3k3yMaskedDataEnd || end < _3k3yMaskedDataBegin {
+	if start >= _3k3yMaskedDataEnd || end <= _3k3yMaskedDataBegin {
 		return
 	}
 
-	for i := _3k3yMaskedDataBegin - start; i < min(_3k3yMaskedDataEnd, end)-start; i++ {
+	for i := max(_3k3yMaskedDataBegin, start) - start; i < min(_3k3yMaskedDataEnd, end)-start; i++ {
 		data[i] = 0
 	}
 }
