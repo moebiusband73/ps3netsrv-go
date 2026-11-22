@@ -105,6 +105,9 @@ func (ks *kongRunService) Execute(args []string, r <-chan svc.ChangeRequest, s c
 				cancel(errShuttingDown)
 				s <- svc.Status{State: svc.StopPending}
 			case svc.Shutdown: // powering off
+				// PreShutdown may not be delivered, cancelling twice is harmless
+				cancel(errShuttingDown)
+				s <- svc.Status{State: svc.StopPending}
 				// timeout is not necessary because Windows can kill service by itself
 				// HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\WaitToKillServiceTimeout
 				return ks.handleAppError(<-errc)
