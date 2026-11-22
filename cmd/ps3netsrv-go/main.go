@@ -32,7 +32,6 @@ type app struct {
 	CHDApp     chdApp     `cmd:"" name:"chd" help:"Helpers for CHD images."`
 	CSOApp     csoApp     `cmd:"" name:"cso" help:"Helpers for CSO/ZSO images."`
 	ClientApp  clientApp  `cmd:"" name:"client" help:"Client for netiso protocol"`
-	SvcApp     svcApp
 
 	Version kong.VersionFlag `help:"Show application version info."`
 	Config  kong.ConfigFlag  `help:"Load configuration from file." env:"PS3NETSRV_CONFIG_FILE"`

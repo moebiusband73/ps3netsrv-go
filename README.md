@@ -9,6 +9,9 @@ I made it because original code is way hard to read and hard to build for some p
 This project written in Go because it's (cross-)compilation is much easier than C/C++ and resulting binaries
 will run without any external library on target system.
 
+> [!NOTE]
+> Only Linux is supported. Releases, packages and Docker images are built for Linux (`amd64`, `arm64` and `arm`).
+
 ## Features 
 
 ### Unique ✳️
@@ -18,7 +21,6 @@ will run without any external library on target system.
 * [Compressed images](#compressed-images) - save your disk space without filesystem-level compression.
 * [Socket activation](#socket-activation) - run service on-demand, only when client (console) connects.
 * [S3 object storage](#s3-object-storage) - serve games directly from an S3-compatible bucket (read-only).
-* Natively runs as [Windows Service](#windows)
 * Built-in protocol client. See `client` subcommand.
 
 ### Supported ✅
@@ -35,7 +37,7 @@ will run without any external library on target system.
 ### Unsupported ❌
 
 * Multipart files `*.666xx`
-* Virtual linked directories (`.ini` file with path instead of directory). IMHO it's absolutely pointless feature. On *nix systems symlinks or bind-mounts can be used. On Windows [symlinks](https://learn.microsoft.com/en-us/windows/win32/fileio/creating-symbolic-links) and [junctions](https://learn.microsoft.com/en-us/windows/win32/fileio/hard-links-and-junctions) can do the same thing.
+* Virtual linked directories (`.ini` file with path instead of directory). IMHO it's absolutely pointless feature. Symlinks or bind-mounts can be used instead.
 
 ## Compressed images
 `ps3netsrv-go` supports compressed images to help save disk space. Currently following formats are supported:
@@ -73,7 +75,7 @@ Use [chdman](https://docs.mamedev.org/tools/chdman.html) tool maintained by MAME
 * PS3 images: *untested* ❔ (technically should work because uses same codebase as PS1 images)
 
 #### Limitations
-* `purego` does not work on some platforms supported by Go (i.e. `aix` and `ppc64`). However, they're pretty exotic nowdays and it's highly unlikely to see `ps3netsrv-go` running on them.
+* `purego` does not work on some Linux architectures supported by Go (i.e. `ppc64` big-endian, `mips`). However, they're pretty exotic nowdays and it's highly unlikely to see `ps3netsrv-go` running on them.
 * `libchdr` does not support `AVHuff` compression codec: https://github.com/rtissera/libchdr/issues/69. However it's used mainly for laserdiscs so it's very unlikely to meet it in videogame images.
 * Mixed CD/non-CD codecs (`cdlz` and `lzma`) and mixed CD modes (`MODE1`, `MODE1/RAW`, etc. in image metadata) are not supported. It's possible to create such image only by specifying `-c` option in `chdman` and probably such images are not supported by other emulators as well.
 
@@ -113,11 +115,11 @@ PS3 will see such images as `.zst.iso` - server intentionally adds .iso extensio
 ## Socket activation
 This is the way to run service only if incomoming connection arrives. It may be useful if you want to lower resource usage because `ps3netsrv-go`
 consumes some CPU and RAM even in idle (without active clients). Key components that used to run service in socket activation mode:
-* Supervisor: [Systemd](https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html) on Linux, [Launchd](https://grokipedia.com/page/Launchd#socket-activation) on MacOS or any that can pass file descriptor in via fork/exec without accepting connection.
+* Supervisor: [Systemd](https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html) or any that can pass file descriptor in via fork/exec without accepting connection.
 * Ability accept connections using inherited listener. In `ps3netsrv-go` it's implemented by using `fd:<id>` or `activated:<name>` as listen address.
 * Optional auto-shutdown after some idle time. In `ps3netsrv-go` it's configured by `--shutdown-idle-timeout` flag or corresponding env variable/config entry.
 
-For example how to run under systemd see [Systemd service](#systemd-service) or [MacOS Launchd service](#macos-launchd-service).
+For example how to run under systemd see [Systemd service](#systemd-service).
 
 ## S3 object storage
 Games can be served directly from an S3-compatible object storage (AWS S3, MinIO, Ceph RGW, Garage, Cloudflare R2, Backblaze B2, etc.)
@@ -152,7 +154,7 @@ If your distro is based on other package manager you may want to use a simple bi
 ### libchdr
 This libarary is required to enable CHD images support. It's included in a following release types:
 * Docker: present in a container image, should work out of the box
-* Release archive: contains compiled version of library except Windows/arm64 build.
+* Release archive: contains compiled version of library.
 
 `libchdr` is **not included** in Linux packages but declared as a dependancy. Most distros contain it in their repos.
 If necessary, getting it compiled on Linux is pretty straightforward if you're familiar with `CMake`.
@@ -179,10 +181,7 @@ Configuration keys names are the same as command line flags names without `--` p
 Config file discovered in following order:
 * `--config` flag or `PS3NETSRV_CONFIG_FILE` environment variable
 * `config.ini` file in current directory
-* `<user config directory>/ps3netsrv-go/config.ini`, where `<user config directory>` is OS-specific directory for user configuration files:
-  * `%APPDATA%` on Windows
-  * `$XDG_CONFIG_HOME` or `~/.config` on Linux
-  * `~/Library/Application Support` on macOS
+* `<user config directory>/ps3netsrv-go/config.ini`, where `<user config directory>` is `$XDG_CONFIG_HOME` or `~/.config`
 
 ## Running
 ### Simple binary
@@ -234,23 +233,6 @@ $ systemctl enable ps3netsrv-go.socket
 ```
 By default it's configured to listen on port `0.0.0.0:38008` and auto-shutdown after 1 minute of idle. In this case config file path is `/etc/ps3netsrv-go/activated.ini`.
 
-### MacOS Launchd service
-
-Launchd (system supervisor on macOS) also supports socket-activation and there is a `.plist` manifest in this repo to run service in socket-activation mode.
-
-> [!IMPORTANT]
-> `purego` is required to run ps3netsrv-go in socket-activation mode on macOS. So if you used `nopurego` tag during build service won't start.
-
-Currently it's you need to install service manually. Installation steps:
-1. [Build an executable](#building) or get a [release](https://github.com/xakep666/ps3netsrv-go/releases)
-2. Copy `ps3netsrv-go` executable to `/usr/local/bin`
-3. Create a root layout: `cp -R <project-root>/package/layout ~/ps3data`
-4. Place config: `mkdir -p "~/Library/Application Support/ps3netsrv-go" && cp <project-root>/package/macos/config.ini "~/Library/Application Support/ps3netsrv-go"`
-5. Place launchd manifest: `cp <project-root>/package/macos/com.xakep666.ps3netsrv-go.plist ~/Library/LaunchAgents`
-6. Enable launchd service: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.xakep666.ps3netsrv-go.plist`
-7. Verify if it's enabled: `launchctl print gui/$(id -u)/com.xakep666.ps3netsrv-go` (should print service details)
-8. Done!
-
 ### Note for non-glibc Linux distros users
 Due to usage of `purego` all Linux executables in releases are dynamically linked ones. 
 By default they're linked to run with `glibc` because it's most popular and widespread libc.
@@ -262,33 +244,6 @@ exec /path/to/ps3netsrv-go: no such file or directory
 There are two ways to resolve this issue:
 * Compile from source code for necessary libc. Recommended way. See [Building](#building) for more details.
 * Run with loader: `/lib/ld-musl-<arch>.so.1 /path/to/ps3netsrv-go`. Downside: `libchdr` likely will not be loaded so CHD support will be disabled.
-
-### Windows
-
-To install ps3netsrv-go as Windows Service use `svc install` subcommand. 
-It requires `--config` flag to be set to explicitly point which config should be used.
-Auto-start is disabled by default for security reasons. However it could be enabled with `--auto-start` flag.
-
-There are some other subcommands in `svc` to control service, check out `--help` for detailed usage.
-
-### FreeBSD
-
-Nothing special is needed for the project to run on FreeBSD.
-1. [Build an executable](#building)
-2. Copy `ps3netsrv-go` executable to `/usr/local/bin`
-3. Install libchdr
-4. (optional) Add an rc script
-```bash
-cp <project-root>/package/freebsd/ps3netsrv /usr/local/etc/rc.d/
-mkdir -vp /var/run/ps3netsrv
-mkdir -vp /usr/local/ps3netsrv
-cp <project-root>/package/freebsd/config.ini /usr/local/ps3netsrv/
-sysrc ps3netsrv_enable=YES
-```
-5. (optional) Add a special user for the rc script
-```bash
-pw useradd ps3 -m -s /usr/sbin/nologin -c "ps3netsrv user" -u 361
-```
 
 ## Performance tips
 * Connect your console to the network using ethernet cable. To achieve maximum performance server and console
@@ -320,7 +275,7 @@ $ go build -o ps3netsrv-go ./cmd/ps3netsrv-go/...
 ```
 
 > [!IMPORTANT]
-> Some platforms require extra build flags to be compiled successfully due to `purego` usage. See [support notes](https://github.com/ebitengine/purego/blob/main/README.md#support-notes) for details.
+> Some architectures require extra build flags to be compiled successfully due to `purego` usage. See [support notes](https://github.com/ebitengine/purego/blob/main/README.md#support-notes) for details.
 
 To disable `purego` usage you can use `nopurego` build tag. I.e. 
 ```bash

@@ -13,7 +13,7 @@ import (
 
 type RunFn func(ctx context.Context, app *kong.Kong, args []string) error
 
-func commonRun(app *kong.Kong, run RunFn) {
+func Run(app *kong.Kong, run RunFn) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	context.AfterFunc(ctx, func() {
 		outFile, ok := app.Stdout.(*os.File)

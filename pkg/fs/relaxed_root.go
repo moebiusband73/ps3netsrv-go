@@ -4,7 +4,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/xakep666/ps3netsrv-go/internal/handler"
@@ -22,10 +21,6 @@ func NewRelaxedSystemRoot(path string) *RelaxedSystemRoot {
 func (r *RelaxedSystemRoot) realPath(name string) (path string, err error) {
 	// taken from https://github.com/spf13/afero/blob/master/basepath.go
 
-	if err := validateBasePathName(name); err != nil {
-		return name, err
-	}
-
 	bpath := filepath.Clean(r.path)
 	path = filepath.Join(bpath, name)
 
@@ -36,22 +31,6 @@ func (r *RelaxedSystemRoot) realPath(name string) (path string, err error) {
 	}
 
 	return path, nil
-}
-
-func validateBasePathName(name string) error {
-	if runtime.GOOS != "windows" {
-		// Not much to do here;
-		// the virtual file paths all look absolute on *nix.
-		return nil
-	}
-
-	// On Windows a common mistake would be to provide an absolute OS path
-	// We could strip out the base part, but that would not be very portable.
-	if filepath.IsAbs(name) {
-		return os.ErrNotExist
-	}
-
-	return nil
 }
 
 func (r *RelaxedSystemRoot) Open(path string) (handler.File, error) {

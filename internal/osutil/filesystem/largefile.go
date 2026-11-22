@@ -1,4 +1,4 @@
-//go:build linux || solaris || aix || zos
+//go:build linux
 
 package filesystem
 
@@ -8,7 +8,5 @@ import "golang.org/x/sys/unix"
 // arm, ...) and 0 on 64-bit ones. Without it, os.Root's openat rejects files
 // larger than 2 GiB on a 32-bit kernel with EOVERFLOW ("value too large for
 // defined data type"), which breaks streaming of PS3 ISOs on legacy 32-bit NAS
-// hardware. The constant is only defined by x/sys/unix on the platforms in the
-// build constraint above (Linux, Solaris, AIX, z/OS); see largefile_other.go
-// for the rest.
+// hardware.
 const openLargeFile = unix.O_LARGEFILE

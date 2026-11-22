@@ -1,8 +1,7 @@
-//go:build !(linux || solaris || aix || zos)
+//go:build !linux
 
 package filesystem
 
-// openLargeFile has no effect on platforms where x/sys/unix does not define
-// O_LARGEFILE (darwin, the BSDs, Windows, ...); large-file access there does
-// not depend on an explicit open flag.
+// openLargeFile is a no-op outside Linux. Only Linux is supported; this file
+// exists so the code still builds on development machines.
 const openLargeFile = 0

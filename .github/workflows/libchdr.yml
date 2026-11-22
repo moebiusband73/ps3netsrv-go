@@ -17,14 +17,6 @@ jobs:
             cmakename: Linux
             goname: linux
             libc: gnu
-          - name: windows
-            cmakename: Windows
-            goname: windows
-            libc: gnu
-          - name: macos
-            cmakename: Darwin
-            goname: darwin
-            libc: none
         include:
           # arm support with soft-float, should not affect performance (libchdr doesn't use float/double)
           # but bring better portability for old arm-based NAS hardware
@@ -36,17 +28,10 @@ jobs:
               cmakename: Linux
               goname: linux
               libc: gnueabi.2.10
-        exclude:
-          # windows arm64 version can't compile
-          - arch:
-              name: aarch64
-            os:
-              name: windows
     name: Build libchdr on ${{ matrix.os.name }}/${{ matrix.arch.name }}
     runs-on: ubuntu-latest
     env:
       ZIGCC_FLAGS: '--target=${{ matrix.arch.name }}-${{ matrix.os.name }}-${{ matrix.os.libc }}'
-      ZIGCC_BLACKLIST_FLAGS: '-Wl,-exported_symbol,_chd_*' # fails for macos
     steps:
       - name: "Checkout libchdr"
         uses: actions/checkout@v7
@@ -70,18 +55,15 @@ jobs:
           build-args: |
             --target chdr
       - name: Install complied libs
-        # 'tar' to preserve symlinks for versioned .so/.dylib files
-        # Windows runtime DLLs are left in the build tree instead of dist/lib
+        # 'tar' to preserve symlinks for versioned .so files
         run: |
           export BUILDDIR="${{ github.workspace }}/build"
           export DISTDIR="${{ github.workspace }}/dist"
           export STAGEDIR="$DISTDIR/stage"
           mkdir -p "$STAGEDIR"
           cmake --install "$BUILDDIR" --prefix "$DISTDIR" --strip
-          find "$DISTDIR/lib" \
-            \( -name 'libchdr.so*' -o -name 'libchdr*.dylib' \) \
+          find "$DISTDIR/lib" -name 'libchdr.so*' \
             \( -type f -o -type l \) -exec cp -P {} "$STAGEDIR/" \;
-          find "$BUILDDIR" -name 'libchdr.dll' -type f -exec cp {} "$STAGEDIR/" \;
           (cd "$STAGEDIR" && tar -cf "$DISTDIR/libchdr.tar" libchdr.*)
       - name: Upload artifacts
         uses: actions/upload-artifact@v7

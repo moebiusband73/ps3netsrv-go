@@ -5,7 +5,6 @@ import (
 	"io"
 	"io/fs"
 	"iter"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -126,8 +125,6 @@ func validName(name string) bool {
 	case name == "", name == ".", name == "..":
 		return false // i.e. directory marker or "a//b" keys
 	case strings.Contains(name, "/"):
-		return false
-	case runtime.GOOS == "windows" && strings.ContainsAny(name, `\:`):
 		return false
 	default:
 		return true

@@ -1,10 +1,9 @@
-//go:build !windows && !nopurego && (((android || ios || linux || darwin || freebsd || netbsd) && (amd64 || arm64)) || (android && (386 || arm)) || (linux && (386 || arm || loong64 || ppc64le || riscv64 || s390x)))
+//go:build linux && !nopurego && (amd64 || arm64 || 386 || arm || loong64 || ppc64le || riscv64 || s390x)
 
 package dynamiclibs
 
 import (
 	"path/filepath"
-	"runtime"
 
 	"github.com/ebitengine/purego"
 )
@@ -12,12 +11,8 @@ import (
 type CDecl = purego.CDecl
 
 func LoadLibrary(name string) (handle uintptr, err error) {
-	dlExt := ".so"
-	if runtime.GOOS == "darwin" {
-		dlExt = ".dylib"
-	}
-	if !filepath.IsAbs(name) && filepath.Ext(name) != dlExt {
-		name += dlExt
+	if !filepath.IsAbs(name) && filepath.Ext(name) != ".so" {
+		name += ".so"
 	}
 
 	// RTLD_NOW to gather as much errors as possible right now

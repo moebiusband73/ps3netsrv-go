@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/minio/minio-go/v7"
@@ -11,10 +10,6 @@ import (
 )
 
 func TestMakeListenerUnix(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix sockets with permissions are not supported on windows")
-	}
-
 	dir := t.TempDir()
 
 	t.Run("regular file is not removed", func(t *testing.T) {

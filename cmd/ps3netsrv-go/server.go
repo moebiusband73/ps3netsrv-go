@@ -20,7 +20,6 @@ import (
 	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/alecthomas/kong"
 	"github.com/lmittmann/tint"
-	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -174,7 +173,7 @@ func (sapp *serverApp) setupLogger(k *kong.Kong) {
 				Level: level,
 			})
 		} else if outIsFile {
-			slogHandler = tint.NewTextHandler(colorable.NewColorable(outFile), &tint.Options{
+			slogHandler = tint.NewTextHandler(outFile, &tint.Options{
 				Level:   level,
 				NoColor: !isatty.IsTerminal(outFile.Fd()),
 			})

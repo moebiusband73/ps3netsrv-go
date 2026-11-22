@@ -14,8 +14,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -250,11 +248,7 @@ func (r *Root) String() string {
 // key converts root-relative path to object key (without trailing slash).
 // Leading "/" before cleaning makes impossible to escape the prefix with "..".
 func (r *Root) key(name string) (string, error) {
-	if runtime.GOOS == "windows" && (filepath.IsAbs(name) || filepath.VolumeName(name) != "") {
-		return "", fs.ErrNotExist
-	}
-
-	rel := strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(name)), "/")
+	rel := strings.TrimPrefix(path.Clean("/"+name), "/")
 	if rel == "" {
 		return r.rootKey(), nil
 	}
