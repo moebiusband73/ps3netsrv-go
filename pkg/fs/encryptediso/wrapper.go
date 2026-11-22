@@ -47,7 +47,7 @@ func (FileWrapper) Name() string {
 func tryGetRedumpKey(fsys pkgfs.SystemRoot, requestedPath string) ([]byte, error) {
 	// encryption makes sense only for .iso or .ISO file inside ps3ISO or PS3ISO directory
 	ext := filepath.Ext(requestedPath)
-	if strings.EqualFold(ext, isoExt) {
+	if !strings.EqualFold(ext, isoExt) {
 		return nil, fs.ErrNotExist
 	}
 
