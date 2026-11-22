@@ -156,7 +156,9 @@ func (c *Client) ReadFile(ctx context.Context, bytesToRead uint32, offset uint64
 
 	_, err = c.copier.CopyN(target, c.conn, int64(resp.BytesRead))
 	if err != nil {
-		return fmt.Errorf("copy: %w", err)
+		// stream position is unknown now, connection can't be used anymore
+		_ = c.Close()
+		return fmt.Errorf("copy: %w", ioError(ctx, err))
 	}
 
 	return nil
@@ -253,6 +255,7 @@ func (c *Client) ReadDirEntry(ctx context.Context) (DirEntry, error) {
 	sb.Grow(int(resp.FilenameLen))
 	_, err = c.copier.CopyN(&sb, c.conn, int64(resp.FilenameLen))
 	if err != nil {
+		_ = c.Close()
 		return DirEntry{}, fmt.Errorf("copy filename: %w", ioError(ctx, err))
 	}
 
@@ -295,6 +298,7 @@ func (c *Client) ReadDirEntryV2(ctx context.Context) (DirEntryV2, error) {
 	sb.Grow(int(resp.FilenameLen))
 	_, err = c.copier.CopyN(&sb, c.conn, int64(resp.FilenameLen))
 	if err != nil {
+		_ = c.Close()
 		return DirEntryV2{}, fmt.Errorf("copy filename: %w", ioError(ctx, err))
 	}
 
@@ -329,11 +333,16 @@ func (c *Client) ReadDir(ctx context.Context) ([]proto.DirEntry, error) {
 		return nil, fmt.Errorf("received unsuccessful response")
 	}
 
-	ret := make([]proto.DirEntry, resp.Size)
-	for i := range resp.Size {
-		if err = c.readResponse(ctx, &ret[i]); err != nil {
+	// don't trust server-provided size for preallocation, every entry takes more than 512 bytes
+	const maxPrealloc = 4096
+	ret := make([]proto.DirEntry, 0, min(resp.Size, maxPrealloc))
+	for range resp.Size {
+		var entry proto.DirEntry
+		if err = c.readResponse(ctx, &entry); err != nil {
+			_ = c.Close()
 			return nil, fmt.Errorf("read dir entry: %w", err)
 		}
+		ret = append(ret, entry)
 	}
 
 	return ret, nil
@@ -395,13 +404,16 @@ func (c *Client) WriteFile(ctx context.Context, chunkSize uint32, from io.Reader
 			return fmt.Errorf("make request: %w", err)
 		}
 
-		var resp proto.CreateFileResult
+		var resp proto.WriteFileResult
 		if err = c.readResponse(ctx, &resp); err != nil {
 			return fmt.Errorf("read response: %w", err)
 		}
 
-		if resp.Result < 0 {
+		if resp.BytesWritten < 0 {
 			return fmt.Errorf("received unsuccessful response")
+		}
+		if int64(resp.BytesWritten) != n {
+			return fmt.Errorf("short write: server written %d bytes of %d", resp.BytesWritten, n)
 		}
 	}
 }
@@ -551,7 +563,11 @@ func (c *Client) applyContext(ctx context.Context) (func(), error) {
 	return func() {
 		if stop() {
 			c.conn.SetDeadline(time.Time{}) // reset deadline
+			return
 		}
+
+		// request was interrupted, stream state is unknown and deadline is in the past
+		_ = c.Close()
 	}, nil
 }
 
