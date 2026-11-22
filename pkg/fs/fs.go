@@ -85,6 +85,7 @@ openerLoop:
 	// special wrapper for directories to process ReadDir with opener's Stat
 	stat, err := file.Stat()
 	if err != nil {
+		_ = file.Close()
 		return nil, err
 	}
 
@@ -101,10 +102,13 @@ openerLoop:
 
 	for _, wrapper := range fsys.wrappers {
 		log.Debug("Applying wrapper", slog.String("wrapper", wrapper.Name()))
-		file, err = wrapper.WrapFile(ctx, fsys, file)
+		wrapped, err := wrapper.WrapFile(ctx, fsys, file)
 		if err != nil {
+			_ = file.Close()
 			return nil, fmt.Errorf("wrapper %s: %w", wrapper.Name(), err)
 		}
+
+		file = wrapped
 	}
 
 	return file, nil

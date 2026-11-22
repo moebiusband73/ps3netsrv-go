@@ -51,11 +51,14 @@ func (o Opener) Open(ctx context.Context, fsys *pkgfs.FS, path string) (handler.
 
 	zr, err := zstd.NewReader(nil)
 	if err != nil {
+		_ = f.Close()
 		return nil, err
 	}
 
 	szr, err := seekable.NewReader(f, zr, seekable.WithReaderLogger(slog.Default()))
 	if err != nil {
+		zr.Close()
+		_ = f.Close()
 		return nil, err
 	}
 
@@ -63,6 +66,7 @@ func (o Opener) Open(ctx context.Context, fsys *pkgfs.FS, path string) (handler.
 		originalFile: f,
 		openPath:     path,
 		reader:       szr,
+		decoder:      zr,
 	}, nil
 }
 
@@ -92,7 +96,8 @@ type file struct {
 	originalFile handler.File
 	openPath     string
 
-	reader *seekable.Reader
+	reader  *seekable.Reader
+	decoder *zstd.Decoder
 }
 
 func (f *file) Read(b []byte) (int, error) {
@@ -100,7 +105,10 @@ func (f *file) Read(b []byte) (int, error) {
 }
 
 func (f *file) Close() error {
-	return f.reader.Close()
+	// seekable.Reader doesn't own decoder and underlying file
+	err := f.reader.Close()
+	f.decoder.Close()
+	return errors.Join(err, f.originalFile.Close())
 }
 
 func (f *file) ReadDir(n int) ([]fs.DirEntry, error) {
