@@ -194,6 +194,11 @@ func (l filesList) filesToRead(toRead, offset iso9660.SizeBytes) iter.Seq[*fileI
 
 		for i := startFile; i < len(l) && toRead > 0; i++ {
 			file := &l[i]
+			if file.size == 0 {
+				// empty files don't occupy any sectors
+				continue
+			}
+
 			if !yield(file) {
 				return
 			}

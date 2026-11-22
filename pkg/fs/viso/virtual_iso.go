@@ -686,24 +686,29 @@ func (viso *VirtualISO) Read(buf []byte) (read int, err error) {
 	// read files
 	if offset < viso.padAreaStart {
 		for fileItem := range viso.files.filesToRead(remain, offset) {
-			if offset < fileItem.rLBA.Bytes() {
+			if remain == 0 {
+				break
+			}
+
+			fileStart := fileItem.rLBA.Bytes()
+			fileEnd := fileStart + fileItem.size.AlignToSectors()
+
+			if offset < fileStart {
 				return read, fmt.Errorf("file %s location (%d) greater than offset (%d)",
-					fileItem.path, fileItem.rLBA.Bytes(), offset)
+					fileItem.path, fileStart, offset)
 			}
 
-			if offset >= fileItem.rLBA.Bytes()+fileItem.size.AlignToSectors() {
+			if offset >= fileEnd {
 				return read, fmt.Errorf("offset (%d) greater than padded file %s location(%d)+size(%d)",
-					offset, fileItem.path, fileItem.rLBA.Bytes(), fileItem.size.AlignToSectors())
+					offset, fileItem.path, fileStart, fileItem.size.AlignToSectors())
 			}
 
-			f, err := fileItem.openOnDemand(viso.ctx, viso.fs)
-			if err != nil {
-				return read, fmt.Errorf("failed to open %s: %w", fileItem.path, err)
-			}
+			if fileOffset := offset - fileStart; fileOffset < fileItem.size {
+				f, err := fileItem.openOnDemand(viso.ctx, viso.fs)
+				if err != nil {
+					return read, fmt.Errorf("failed to open %s: %w", fileItem.path, err)
+				}
 
-			fileOffset := offset - fileItem.rLBA.Bytes()
-
-			if fileOffset < fileItem.size {
 				_, err = f.Seek(int64(fileOffset), io.SeekStart)
 				if err != nil {
 					return read, fmt.Errorf("seek %s failed: %w", fileItem.path, err)
@@ -722,16 +727,9 @@ func (viso *VirtualISO) Read(buf []byte) (read int, err error) {
 				offset += iso9660.SizeBytes(n)
 			}
 
-			// fill remaining space with zeroes
-			if fileItem.size%iso9660.SectorSize > 0 && remain > 0 {
-				toWrite := iso9660.SectorSize - fileItem.size%iso9660.SectorSize
-				if remain < toWrite {
-					remain = toWrite
-				}
-
-				for i := range toWrite {
-					buf[i] = 0
-				}
+			// fill space between file end and sector end with zeroes
+			if toWrite := min(remain, fileEnd-offset); toWrite > 0 {
+				clear(buf[:toWrite])
 				buf = buf[toWrite:]
 				remain -= toWrite
 				read += int(toWrite)
@@ -742,18 +740,12 @@ func (viso *VirtualISO) Read(buf []byte) (read int, err error) {
 
 	// read pad area
 	if offset >= viso.padAreaStart && offset < viso.totalSize {
-		toRead := viso.padAreaSize - (offset - viso.padAreaStart)
-		if toRead == 0 {
-			return read, nil
-		}
+		toWrite := min(remain, viso.totalSize-offset)
+		clear(buf[:toWrite])
 
-		for i := range remain {
-			buf[i] = 0
-		}
-
-		offset += remain
-		read += int(remain)
-		remain = 0
+		offset += toWrite
+		read += int(toWrite)
+		remain -= toWrite
 	}
 
 	return read, nil
