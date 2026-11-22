@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/KimMachineGun/automemlimit/memlimit"
@@ -166,6 +166,7 @@ func (sapp *serverApp) warnIPRange(listener net.Listener) {
 	case *net.IPAddr:
 		addrToCheck = addr.IP
 	default:
+		slog.Warn("Client whitelist has no effect for non-IP listener.", "addr", listener.Addr())
 		return
 	}
 	if addrToCheck.IsUnspecified() {
@@ -201,8 +202,10 @@ func (sapp *serverApp) server(ctx context.Context, idt *idleTracker) error {
 	if sapp.StrictRoot {
 		root, err := os.OpenRoot(sapp.Root)
 		if err != nil {
+			_ = socket.Close()
 			return fmt.Errorf("open root failed: %w", err)
 		}
+		defer root.Close()
 		// Wrap so large files (>2 GiB, i.e. every PS3 ISO) can be opened on
 		// 32-bit platforms; os.Root's openat omits O_LARGEFILE.
 		sysRoot = filesystem.NewStrictSystemRoot(root)
@@ -400,7 +403,10 @@ func (sapp *serverApp) Run(ctx context.Context, k *kong.Kong) error {
 type idleTracker struct {
 	idleTimeout time.Duration
 
-	clientCount atomic.Int32
+	// mu guards clientCount and timer state together:
+	// separate atomic counter and timer operations may interleave and arm the timer while a client is connected.
+	mu          sync.Mutex
+	clientCount int
 	idleTimer   *time.Timer
 }
 
@@ -408,10 +414,19 @@ func newIdleTracker(idleTimeout time.Duration, expiredCallback func()) *idleTrac
 	if idleTimeout <= 0 {
 		return nil
 	}
-	return &idleTracker{
-		idleTimeout: idleTimeout,
-		idleTimer:   time.AfterFunc(idleTimeout, expiredCallback),
-	}
+
+	t := &idleTracker{idleTimeout: idleTimeout}
+	t.idleTimer = time.AfterFunc(idleTimeout, func() {
+		// timer may fire concurrently with Connected
+		t.mu.Lock()
+		idle := t.clientCount <= 0
+		t.mu.Unlock()
+
+		if idle {
+			expiredCallback()
+		}
+	})
+	return t
 }
 
 func (t *idleTracker) Connected() {
@@ -419,9 +434,11 @@ func (t *idleTracker) Connected() {
 		return
 	}
 
-	if clients := t.clientCount.Add(1); clients > 0 {
-		t.idleTimer.Stop()
-	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.clientCount++
+	t.idleTimer.Stop()
 }
 
 func (t *idleTracker) Disconnected() {
@@ -429,7 +446,11 @@ func (t *idleTracker) Disconnected() {
 		return
 	}
 
-	if clients := t.clientCount.Add(-1); clients <= 0 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.clientCount--
+	if t.clientCount <= 0 {
 		t.idleTimer.Reset(t.idleTimeout)
 	}
 }
@@ -483,16 +504,35 @@ func makeListener(addr string) (net.Listener, error) {
 			return net.Listen("unix", path)
 		}
 
-		path, perm, _ := strings.Cut(path, ",") // get permissions
-		_ = os.Remove(path)                     // remove existing file
+		path, perm, hasPerm := strings.Cut(path, ",") // get permissions
+
+		var parsedPerm uint64
+		if hasPerm {
+			var err error
+			if parsedPerm, err = strconv.ParseUint(perm, 8, 32); err != nil {
+				return nil, fmt.Errorf("parse unix socket permissions %q: %w", perm, err)
+			}
+		}
+
+		// remove stale socket left from previous run, but never touch other kinds of files
+		if st, err := os.Lstat(path); err == nil {
+			if st.Mode().Type() != os.ModeSocket {
+				return nil, fmt.Errorf("%s exists and is not a socket", path)
+			}
+			if err = os.Remove(path); err != nil {
+				return nil, fmt.Errorf("remove stale socket: %w", err)
+			}
+		}
+
 		lis, err := net.Listen("unix", path)
 		if err != nil {
 			return nil, err
 		}
 
-		if parsedPerm, err := strconv.ParseUint(perm, 8, 32); err == nil {
+		if hasPerm {
 			// apply permissions to file
 			if err = os.Chmod(path, os.FileMode(parsedPerm)); err != nil {
+				_ = lis.Close()
 				return nil, fmt.Errorf("chmod: %w", err)
 			}
 		}

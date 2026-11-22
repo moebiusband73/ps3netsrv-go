@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 
 	"github.com/alecthomas/kong"
