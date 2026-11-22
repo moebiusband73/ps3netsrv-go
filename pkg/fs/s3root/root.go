@@ -159,6 +159,8 @@ type Root struct {
 	pages *pageCache
 	reqs  chan struct{} // limits concurrent GET requests
 
+	created time.Time // reported as modification time of directories without marker object
+
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -208,7 +210,9 @@ func New(cfg Config) (*Root, error) {
 		pages:  newPageCache(cfg.CacheSize),
 		reqs:   make(chan struct{}, cfg.MaxConcurrentRequests),
 		ctx:    ctx,
-		cancel: cancel,
+
+		created: time.Now(),
+		cancel:  cancel,
 	}, nil
 }
 
@@ -219,7 +223,7 @@ func (r *Root) Check(ctx context.Context) error {
 		return fmt.Errorf("check bucket %q: %w", r.bucket, mapError(err))
 	}
 	if !ok {
-		return fmt.Errorf("bucket %q: %w", r.bucket, fs.ErrNotExist)
+		return fmt.Errorf("bucket %q does not exist: %w", r.bucket, fs.ErrNotExist)
 	}
 
 	// listing permission is required to serve directories
@@ -318,7 +322,7 @@ func (r *Root) stat(ctx context.Context, name string) (objInfo, error) {
 	}
 
 	if r.isRootKey(key) {
-		return objInfo{key: key, name: ".", isDir: true}, nil
+		return objInfo{key: key, name: ".", isDir: true, modTime: r.created}, nil
 	}
 
 	if info, found, exists := r.meta.get(key, r.parentPrefix(key)); found {
@@ -347,7 +351,7 @@ func (r *Root) stat(ctx context.Context, name string) (objInfo, error) {
 			return objInfo{}, mapError(obj.Err)
 		}
 
-		info := objInfo{key: key, name: path.Base(key), isDir: true}
+		info := objInfo{key: key, name: path.Base(key), isDir: true, modTime: r.created}
 		if obj.Key == key+"/" { // directory marker
 			info.modTime = obj.LastModified
 		}

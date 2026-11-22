@@ -208,6 +208,12 @@ func TestStatAndReadDir(t *testing.T) {
 			require.Equal(t, isDir || name == "", fi.IsDir(), name)
 		}
 
+		for _, name := range []string{"", "PS3ISO", "EMPTY"} {
+			fi, err := r.Stat(filepath.FromSlash(name))
+			require.NoError(t, err)
+			require.Positive(t, fi.ModTime().Unix(), "directory %q must have meaningful mtime", name)
+		}
+
 		fi, err := r.Stat(filepath.FromSlash("PS3ISO/a.iso"))
 		require.NoError(t, err)
 		require.EqualValues(t, 4, fi.Size())
@@ -227,6 +233,11 @@ func TestStatAndReadDir(t *testing.T) {
 		entries, err := d.ReadDir(-1)
 		require.NoError(t, err)
 		require.Equal(t, []string{"EMPTY/", "PS3ISO/", "top.txt"}, entryNames(entries))
+		for _, e := range entries {
+			info, err := e.Info()
+			require.NoError(t, err)
+			require.Positive(t, info.ModTime().Unix(), e.Name())
+		}
 
 		entries, err = d.ReadDir(-1)
 		require.NoError(t, err)

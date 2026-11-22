@@ -43,7 +43,7 @@ func (w *Writer) SendReadDirResult(entries []fs.FileInfo) error {
 
 	for _, entry := range entries {
 		dirEntry := DirEntry{
-			ModTime:     uint64(entry.ModTime().UTC().Unix()),
+			ModTime:     unixTime(entry.ModTime()),
 			IsDirectory: entry.IsDir(),
 		}
 		if !entry.IsDir() {
@@ -152,7 +152,7 @@ func (w *Writer) SendStatFileError() error {
 func (w *Writer) SendOpenFileResult(info fs.FileInfo) error {
 	result := OpenFileResult{
 		FileSize: info.Size(),
-		ModTime:  uint64(info.ModTime().UTC().Unix()),
+		ModTime:  unixTime(info.ModTime()),
 	}
 
 	if err := w.sendResult(result); err != nil {
@@ -309,17 +309,22 @@ func (w *Writer) sendResult(data any) error {
 	return nil
 }
 
+// unixTime converts time to protocol representation, times before epoch (i.e. zero time) are sent as 0.
+func unixTime(t time.Time) uint64 {
+	return uint64(max(t.Unix(), 0))
+}
+
 func fileInfoTimes(info fs.FileInfo) (mtime, ctime, atime uint64) {
-	mtime = uint64(info.ModTime().UTC().Unix())
+	mtime = unixTime(info.ModTime())
 	atime = mtime
 	ctime = mtime
 
 	if accessTime, ok := fileInfoAsType[AccessTimeFileInfo](info); ok && !accessTime.AccessTime().IsZero() {
-		atime = uint64(accessTime.AccessTime().UTC().Unix())
+		atime = unixTime(accessTime.AccessTime())
 	}
 
 	if changeTime, ok := fileInfoAsType[ChangeTimeFileInfo](info); ok && !changeTime.ChangeTime().IsZero() {
-		ctime = uint64(changeTime.ChangeTime().UTC().Unix())
+		ctime = unixTime(changeTime.ChangeTime())
 	}
 
 	return

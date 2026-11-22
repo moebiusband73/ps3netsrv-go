@@ -112,7 +112,7 @@ func (d *dir) entry(obj minio.ObjectInfo) (dirEntry, bool) {
 
 	key := d.prefix + name
 	if isDir {
-		return dirEntry{info: objInfo{key: key, name: name, isDir: true}}, true
+		return dirEntry{info: objInfo{key: key, name: name, isDir: true, modTime: d.root.created}}, true
 	}
 
 	info := objInfoFromObject(key, obj)
