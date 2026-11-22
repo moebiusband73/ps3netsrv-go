@@ -16,7 +16,16 @@ import (
 	"github.com/xakep666/ps3netsrv-go/pkg/server"
 )
 
-type state struct{}
+type state struct {
+	onClose func()
+}
+
+func (s *state) Close() error {
+	if s.onClose != nil {
+		s.onClose()
+	}
+	return nil
+}
 
 type ctx = server.Context[state]
 
@@ -25,9 +34,15 @@ var errStub = errors.New("stub")
 // stubHandler fails every operation without touching request data.
 type stubHandler struct {
 	panicOnOpenDir bool
+	onInit         func(*ctx)
 }
 
-func (stubHandler) Init(*ctx) error { return nil }
+func (h stubHandler) Init(c *ctx) error {
+	if h.onInit != nil {
+		h.onInit(c)
+	}
+	return nil
+}
 func (h stubHandler) HandleOpenDir(*ctx, string) (bool, error) {
 	if h.panicOnOpenDir {
 		panic("boom")
@@ -57,6 +72,12 @@ func (stubHandler) HandleReadFile(*ctx, uint32, uint64, server.ReadFileResponseW
 
 func startServer(t *testing.T, h server.Handler[state]) net.Conn {
 	t.Helper()
+	_, conn := startServerWithHandle(t, h)
+	return conn
+}
+
+func startServerWithHandle(t *testing.T, h server.Handler[state]) (*server.Server[state], net.Conn) {
+	t.Helper()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -73,7 +94,7 @@ func startServer(t *testing.T, h server.Handler[state]) net.Conn {
 	t.Cleanup(func() { _ = conn.Close() })
 	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
 
-	return conn
+	return srv, conn
 }
 
 func command(op proto.OpCode, tail ...any) []byte {
@@ -127,4 +148,26 @@ func TestHandlerPanicDoesNotCrashServer(t *testing.T) {
 	// connection must be closed by server
 	_, err = conn.Read(make([]byte, 1))
 	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestCloseWaitsForConnections(t *testing.T) {
+	inited := make(chan struct{})
+	stateClosed := make(chan struct{})
+
+	srv, _ := startServerWithHandle(t, stubHandler{onInit: func(c *ctx) {
+		c.State.onClose = func() {
+			time.Sleep(100 * time.Millisecond) // i.e. slow file close
+			close(stateClosed)
+		}
+		close(inited)
+	}})
+
+	<-inited
+	require.NoError(t, srv.Close())
+
+	select {
+	case <-stateClosed:
+	default:
+		t.Fatal("connection state must be closed when Close returns")
+	}
 }

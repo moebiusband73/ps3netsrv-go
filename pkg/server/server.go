@@ -37,6 +37,7 @@ type Server[StateT any] struct {
 	listeners     map[*net.Listener]struct{}
 	activeConn    map[*net.Conn]struct{}
 	listenerGroup sync.WaitGroup
+	connGroup     sync.WaitGroup
 }
 
 func (s *Server[StateT]) Serve(ln net.Listener) error {
@@ -184,8 +185,10 @@ func (s *Server[StateT]) trackConn(c *net.Conn, add bool) bool {
 			return false
 		}
 		s.activeConn[c] = struct{}{}
+		s.connGroup.Add(1)
 	} else {
 		delete(s.activeConn, c)
+		s.connGroup.Done()
 	}
 	return true
 }
@@ -210,8 +213,13 @@ func (s *Server[StateT]) Close() error {
 
 	for c := range s.activeConn {
 		(*c).Close()
-		delete(s.activeConn, c)
 	}
+
+	// wait for connection goroutines to release per-connection state (open files, OnClose hooks)
+	s.mu.Unlock()
+	s.connGroup.Wait()
+	s.mu.Lock()
+
 	return err
 }
 
