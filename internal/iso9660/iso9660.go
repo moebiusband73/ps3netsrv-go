@@ -104,7 +104,9 @@ type (
 	StringD1 string
 )
 
-var utf16Encoder = unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM).NewEncoder() // ucs2 is utf16 actually
+// utf16 is used to encode Joliet strings (ucs2 is utf16 actually).
+// Encoders are stateful and not safe for concurrent use, so a new one is created for every call.
+var utf16 = unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM)
 
 // VolumeDescriptorHeader represents the data in bytes 0-6
 // of a Volume Descriptor as defined in ECMA-119 8.1
@@ -418,10 +420,21 @@ func MangleStringA(in string, joliet bool) StringA {
 	}, in)
 
 	if joliet {
-		ret, _ = utf16Encoder.String(ret)
+		ret, _ = utf16.NewEncoder().String(ret)
 	}
 
 	return StringA(ret)
+}
+
+// Truncate limits string to the maxLen bytes.
+// Mangled d-strings contain only ASCII characters (2 bytes each in Joliet),
+// so truncation to even length never splits a character.
+func (s StringD) Truncate(maxLen SizeBytes) StringD {
+	if SizeBytes(len(s)) > maxLen {
+		return s[:maxLen]
+	}
+
+	return s
 }
 
 func MangleStringD(in string, joliet bool) StringD {
@@ -440,7 +453,7 @@ func MangleStringD(in string, joliet bool) StringD {
 	}, in)
 
 	if joliet {
-		ret, _ = utf16Encoder.String(ret)
+		ret, _ = utf16.NewEncoder().String(ret)
 	}
 
 	return StringD(ret)
@@ -449,7 +462,7 @@ func MangleStringD(in string, joliet bool) StringD {
 func MangleStringD1(in string, joliet bool) StringD1 {
 	ret := in
 	if joliet {
-		ret, _ = utf16Encoder.String(ret)
+		ret, _ = utf16.NewEncoder().String(ret)
 	}
 
 	return StringD1(ret)

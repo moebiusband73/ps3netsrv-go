@@ -81,3 +81,17 @@ func TestReadBufferShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestLongVolumeName(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+
+	isoRoot := "A Very Long Game Directory Name That Exceeds Volume Identifier Limits"
+	require.NoError(t, root.Mkdir(isoRoot, os.ModePerm))
+	require.NoError(t, root.WriteFile(filepath.Join(isoRoot, "a.txt"), []byte("a"), os.ModePerm))
+
+	v, err := viso.NewVirtualISO(t.Context(), pkgfs.NewFS(root, nil, nil), isoRoot, false)
+	require.NoError(t, err)
+	require.NoError(t, v.Close())
+}

@@ -121,6 +121,11 @@ func (viso *VirtualISO) init() error {
 			return fmt.Errorf("getTitleID failed: %w", err)
 		}
 
+		// product id is built as "XXXX-NNNNN"
+		if len(gameCode) <= 4 {
+			return fmt.Errorf("invalid TITLE_ID %q", gameCode)
+		}
+
 		volumeName = ps3ModeVolumeName
 	} else {
 		_, volumeName = filepath.Split(viso.root)
@@ -495,6 +500,12 @@ func (viso *VirtualISO) calculateSizes(filesLBA iso9660.SizeSectors) {
 	viso.padAreaSize = padSectors.Bytes()
 }
 
+// sizes of fixed-length identifier fields in volume descriptor
+const (
+	volumeIdentifierSize    iso9660.SizeBytes = 32
+	volumeSetIdentifierSize iso9660.SizeBytes = 128
+)
+
 func (viso *VirtualISO) makeVolumeDescriptors(volumeName string) {
 	descriptorsLBA := iso9660.SystemAreaSize.Sectors()
 	pathTableLLBA := descriptorsLBA + volumeDescriptorsCount + 1                       // little-endian iso path table
@@ -512,7 +523,7 @@ func (viso *VirtualISO) makeVolumeDescriptors(volumeName string) {
 		},
 		Primary: &iso9660.PrimaryVolumeDescriptorBody{
 			StringPadding:             ' ',
-			VolumeIdentifier:          iso9660.MangleStringD(volumeName, false),
+			VolumeIdentifier:          iso9660.MangleStringD(volumeName, false).Truncate(volumeIdentifierSize),
 			VolumeSpaceSize:           viso.volumeSizeSectors,
 			VolumeSetSize:             1,
 			VolumeSequenceNumber:      1,
@@ -520,7 +531,7 @@ func (viso *VirtualISO) makeVolumeDescriptors(volumeName string) {
 			PathTableSize:             viso.pathTable.size(),
 			TypeLPathTableLoc:         pathTableLLBA,
 			TypeMPathTableLoc:         pathTableMLBA,
-			VolumeSetIdentifier:       iso9660.MangleStringD(volumeName, false),
+			VolumeSetIdentifier:       iso9660.MangleStringD(volumeName, false).Truncate(volumeSetIdentifierSize),
 			VolumeCreationDateAndTime: iso9660.VolumeDescriptorTimestampFromTime(now),
 			FileStructureVersion:      1,
 			RootDirectoryEntry:        &viso.rootDir[0].dirEntry[0].FixedDirectoryEntry,
@@ -535,7 +546,7 @@ func (viso *VirtualISO) makeVolumeDescriptors(volumeName string) {
 		},
 		Primary: &iso9660.PrimaryVolumeDescriptorBody{
 			StringPadding:             0,
-			VolumeIdentifier:          iso9660.MangleStringD(volumeName, true),
+			VolumeIdentifier:          iso9660.MangleStringD(volumeName, true).Truncate(volumeIdentifierSize),
 			VolumeSpaceSize:           viso.volumeSizeSectors,
 			EscapeSequences:           "%/@",
 			VolumeSetSize:             1,
@@ -544,7 +555,7 @@ func (viso *VirtualISO) makeVolumeDescriptors(volumeName string) {
 			PathTableSize:             viso.pathTableJoliet.size(),
 			TypeLPathTableLoc:         pathTableJolietLLBA,
 			TypeMPathTableLoc:         pathTableJolietMLBA,
-			VolumeSetIdentifier:       iso9660.MangleStringD(volumeName, true),
+			VolumeSetIdentifier:       iso9660.MangleStringD(volumeName, true).Truncate(volumeSetIdentifierSize),
 			VolumeCreationDateAndTime: iso9660.VolumeDescriptorTimestampFromTime(now),
 			FileStructureVersion:      1,
 			RootDirectoryEntry:        &viso.rootDir[0].dirEntryJoliet[0].FixedDirectoryEntry,
